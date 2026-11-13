@@ -1,0 +1,297 @@
+{
+  "step_file": "example.step",
+  "title": {
+    "drawing_number": "EX-0001",
+    "description": "POCKETED PLATE",
+    "material": "AL 6082-T6",
+    "finish": "CLEAR ANODISE",
+    "notes": "REMOVE ALL BURRS AND SHARP EDGES. POCKET CORNER RADII R3. UNLESS OTHERWISE STATED TOLERANCES ±0.2, ANGLES ±0.5°.",
+    "revision": "A",
+    "drawn_by": "R",
+    "date": "2026-11-12"
+  },
+  "views": [
+    {
+      "name": "plan",
+      "direction": [
+        0,
+        0,
+        1
+      ],
+      "up": [
+        0,
+        1,
+        0
+      ],
+      "location": [
+        118,
+        185
+      ],
+      "scale": 1.0,
+      "hidden_lines": false,
+      "dimensions": [
+        {
+          "type": "linear",
+          "from": "faces(\"<X\")",
+          "to": "faces(\">X\")",
+          "direction": "horizontal",
+          "side": "above",
+          "tolerance": 0.1
+        },
+        {
+          "type": "linear",
+          "from": "faces(\"<X[-2]\")",
+          "to": "faces(\">X\")",
+          "direction": "horizontal",
+          "side": "left",
+          "tolerance": {
+            "type": "symmetric",
+            "value": 0.1
+          }
+        },
+        {
+          "type": "ordinate",
+          "origin": "vertices(\"<X and <Y\")",
+          "direction": "x",
+          "side": "below",
+          "targets": [
+            "faces(\"%CYLINDER\").faces(\"<Y\")",
+            "faces(\">Z\").faces(\">(0.86603,0.5,0)\")"
+          ],
+          "tolerance": "basic"
+        },
+        {
+          "type": "ordinate",
+          "origin": "vertices(\"<X and <Y\")",
+          "direction": "y",
+          "side": "right",
+          "targets": [
+            "faces(\"%CYLINDER\").faces(\"<Y\")",
+            "faces(\"%CYLINDER\").faces(\"<Y[1]\")",
+            "faces(\">Z\").faces(\">(0.86603,0.5,0)\")",
+            "faces(\"%CYLINDER\").faces(\"<X[2]\").faces(\">Y\")"
+          ],
+          "tolerance": "basic"
+        },
+        {
+          "type": "diameter",
+          "of": "faces(\"%CYLINDER\").faces(\"<X[2]\").faces(\">Y\")",
+          "text": "2X Ø<> THRU",
+          "tolerance": {
+            "type": "limits",
+            "plus": 0.1,
+            "minus": 0
+          },
+          "gdt": [
+            {
+              "characteristic": "position",
+              "tolerance": 0.123,
+              "diameter": true,
+              "datums": [
+                "A",
+                "C",
+                "B"
+              ],
+              "modifier": "M"
+            }
+          ]
+        },
+        {
+          "type": "diameter",
+          "of": "faces(\"%CYLINDER\").faces(\"<Y[1]\")",
+          "text": "Ø<> x 5 DEEP",
+          "tolerance": {
+            "type": "symmetric",
+            "plus": 0.1,
+            "minus": 0
+          }
+        },
+        {
+          "type": "linear",
+          "direction": "vertical",
+          "from": "faces(\"+Y\").faces(\"<Y\")",
+          "to": "faces(\"-Y\").faces(\">Y\")",
+          "tolerance": {
+            "type": "asymmetric",
+            "plus": 0.2,
+            "minus": -0.1
+          }
+        },
+        {
+          "type": "angle",
+          "from": "faces(\">X\")",
+          "to": "faces(\"+(0.86603,0.5,0)\").faces(\">(0.86603,0.5,0)\")"
+        }
+      ],
+      "gdt": [],
+      "datums": [
+        {
+          "label": "B",
+          "attach": "faces(\"<X\")"
+        },
+        {
+          "label": "C",
+          "attach": "faces(\"<Y\")"
+        }
+      ],
+      "details": [
+        {
+          "label": "D",
+          "center": "faces(\">Z\").faces(\">(0.86603,0.5,0)\")",
+          "radius": 24,
+          "scale": 1.5,
+          "dimensions": [
+            {
+              "type": "linear",
+              "direction": "aligned",
+              "from": "faces(\"+(-0.86603,-0.5,0)\").faces(\">(0.86603,0.5,0)\")",
+              "to": "faces(\"+(0.86603,0.5,0)\").faces(\"<(0.86603,0.5,0)\")"
+            },
+            {
+              "type": "linear",
+              "direction": "aligned",
+              "from": "faces(\"+(0.5,-0.86603,0)\").faces(\">(-0.5,0.86603,0)\")",
+              "to": "faces(\"+(-0.5,0.86603,0)\").faces(\"<(-0.5,0.86603,0)\")"
+            },
+            {
+              "type": "linear",
+              "direction": "aligned",
+              "from": "faces(\"+(0.86603,0.5,0)\").faces(\">(0.86603,0.5,0)\")",
+              "to": "faces(\"+(-0.86603,-0.5,0)\").faces(\"<(0.86603,0.5,0)\")"
+            },
+            {
+              "type": "linear",
+              "direction": "aligned",
+              "from": "faces(\"+(-0.5,0.86603,0)\").faces(\">(-0.5,0.86603,0)\")",
+              "to": "faces(\"+(0.5,-0.86603,0)\").faces(\"<(-0.5,0.86603,0)\")"
+            },
+            {
+              "type": "radius",
+              "of": "faces(\"%CYLINDER\").faces(\">Y\")",
+              "text": "R<> TYP"
+            }
+          ]
+        }
+      ],
+      "sections": [
+        {
+          "label": "A",
+          "position": "bottom",
+          "through": "faces(\"%CYLINDER\").faces(\"<Y[5]\").faces(\">X\")",
+          "dimensions": [
+            {
+              "type": "linear",
+              "from": "faces(\"<Z\")",
+              "to": "faces(\">Z\")",
+              "direction": "vertical",
+              "side": "left",
+              "tolerance": {
+                "type": "symmetric",
+                "value": 0.05
+              }
+            },
+            {
+              "type": "diameter",
+              "of": "faces(\"%CYLINDER\").faces(\"<Y[5]\").faces(\">X\")",
+              "tolerance": {
+                "type": "limits",
+                "plus": 0,
+                "minus": -0.03
+              },
+              "id": "boss"
+            },
+            {
+              "type": "angle",
+              "from": "faces(\"<Z\")",
+              "to": "faces(\"+(-0.17365,0,0.98481)\")"
+            },
+            {
+              "type": "radius",
+              "of": "faces(\"%CYLINDER\").faces(\"<X\")"
+            }
+          ],
+          "gdt": [
+            {
+              "attach": "faces(\"<Z\")",
+              "characteristic": "flatness",
+              "tolerance": 0.05
+            },
+            {
+              "characteristic": "perpendicularity",
+              "tolerance": 0.02,
+              "diameter": true,
+              "modifier": "L",
+              "datums": [
+                "A"
+              ],
+              "dimension": "boss"
+            }
+          ],
+          "datums": [
+            {
+              "label": "A",
+              "attach": "faces(\"<Z\")"
+            }
+          ],
+          "notes": [
+            {
+              "text": "3 x 45°",
+              "attach": "faces(\"+(0.70711,0,0.70711)\")",
+              "boxed": false
+            },
+            {
+              "text": "POCKET 20 SQ x 5 DEEP WITH Ø10 BOSS, SQUARE TO FLOOR",
+              "attach": "faces(\"+(-0.17365,0,0.98481)\")",
+              "boxed": false
+            }
+          ]
+        },
+        {
+          "label": "B",
+          "position": "right",
+          "through": "faces(\">Z\").faces(\">(0.86603,0.5,0)\")",
+          "dimensions": [
+            {
+              "type": "linear",
+              "from": "faces(\"+Z\").faces(\"<Z\").faces(\">X\")",
+              "to": "faces(\">Z\")",
+              "direction": "horizontal"
+            }
+          ]
+        },
+        {
+          "label": "C",
+          "position": "left",
+          "through": "faces(\"%CYLINDER\").faces(\"<X[1]\")",
+          "dimensions": [
+            {
+              "type": "linear",
+              "from": "faces(\"+Z\").faces(\"<Z\").faces(\"<X\")",
+              "to": "faces(\">Z\")",
+              "direction": "horizontal"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "isometric",
+      "direction": [
+        1,
+        -1,
+        1
+      ],
+      "up": [
+        0,
+        0,
+        1
+      ],
+      "location": [
+        368,
+        238
+      ],
+      "scale": 0.55,
+      "hidden_lines": false
+    }
+  ]
+}

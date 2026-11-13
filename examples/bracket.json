@@ -1,0 +1,261 @@
+{
+  "step_file": "bracket.step",
+  "title": {
+    "drawing_number": "BRK-0001",
+    "description": "MOUNTING BRACKET",
+    "material": "AL 6061-T6",
+    "finish": "CLEAR ANODISE",
+    "notes": "REMOVE ALL BURRS AND SHARP EDGES. UNLESS OTHERWISE STATED TOLERANCES ±0.2, ANGLES ±0.5°.",
+    "revision": "A",
+    "drawn_by": "R",
+    "date": "2026-11-12"
+  },
+  "views": [
+    {
+      "name": "front",
+      "direction": [
+        0,
+        -1,
+        0
+      ],
+      "up": [
+        0,
+        0,
+        1
+      ],
+      "location": [
+        120,
+        175
+      ],
+      "scale": 1.0,
+      "projected": [
+        {
+          "name": "top",
+          "position": "top",
+          "dimensions": [
+            {
+              "type": "angle",
+              "from": "faces(\"<X\")",
+              "to": "faces(\"<Y\")"
+            },
+            {
+              "type": "linear",
+              "from": "faces(\"<Y\")",
+              "to": "faces(\">Y\")",
+              "direction": "vertical",
+              "side": "left",
+              "tolerance": "basic"
+            },
+            {
+              "type": "linear",
+              "from": "faces(\"<Y\")",
+              "to": "faces(\"%PLANE\").faces(\">X\")",
+              "direction": "vertical",
+              "side": "right",
+              "text": "<>",
+              "tolerance": "basic"
+            },
+            {
+              "type": "ordinate",
+              "origin": "vertices(\"<X and <Y\")",
+              "direction": "x",
+              "side": "below",
+              "targets": [
+                "faces('%CYLINDER').faces(\"<X[1]\")",
+                "faces(\"%CYLINDER\").faces(\">X\")",
+                "faces(\"%PLANE\").faces(\">Y\").edges(\"|X\").vertices(\">X\")",
+                "faces(\">X\")"
+              ]
+            },
+            {
+              "type": "diameter",
+              "of": "faces(\"%CYLINDER\").faces(\"<X[1]\")",
+              "tolerance": {
+                "plus": 0.1,
+                "minus": 0
+              }
+            },
+            {
+              "type": "diameter",
+              "of": "faces(\"%CYLINDER\").faces(\">X\")"
+            },
+            {
+              "type": "radius",
+              "of": "faces(\"%CYLINDER\").faces(\"<X\")"
+            },
+            {
+              "type": "angle",
+              "from": "faces(\">Y\")",
+              "to": "faces(\"%PLANE\").faces(\">(1,1,0)\")"
+            }
+          ],
+          "gdt": [
+            {
+              "attach": "faces(\"%CYLINDER\").faces(\"<X[1]\")",
+              "characteristic": "position",
+              "tolerance": 0.1,
+              "diameter": true,
+              "modifier": "M",
+              "datums": [
+                "A",
+                "B",
+                "C"
+              ]
+            }
+          ],
+          "datums": [
+            {
+              "label": "B",
+              "attach": "faces(\"<Y\")"
+            },
+            {
+              "label": "C",
+              "attach": "faces(\"<X\")"
+            }
+          ],
+          "notes": [
+            {
+              "text": "2 HOLES THRU",
+              "attach": "faces(\"%CYLINDER\").faces(\">X\")"
+            }
+          ],
+          "sections": [
+            {
+              "label": "B",
+              "position": "right",
+              "through": "faces(\"%CYLINDER\").faces(\">X\")",
+              "dimensions": [
+                {
+                  "type": "linear",
+                  "from": "faces(\"<Z\")",
+                  "to": "faces(\">Z\")",
+                  "direction": "horizontal",
+                  "side": "above"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "right",
+          "position": "right",
+          "dimensions": [
+            {
+              "type": "linear",
+              "from": "faces(\"<Y\")",
+              "to": "faces(\">Y\")",
+              "direction": "horizontal",
+              "side": "below"
+            }
+          ],
+          "gdt": [
+            {
+              "attach": "faces(\">Z\")",
+              "characteristic": "parallelism",
+              "tolerance": "0.05",
+              "datums": [
+                "A"
+              ]
+            }
+          ],
+          "datum_targets": [
+            {
+              "label": "C1",
+              "kind": "area",
+              "size": "Ø6",
+              "attach": "faces(\">X\")",
+              "point": [
+                100,
+                20,
+                10
+              ]
+            }
+          ]
+        }
+      ],
+      "dimensions": [
+        {
+          "type": "linear",
+          "from": "faces(\"<Z\")",
+          "to": "faces(\">Z\")",
+          "direction": "vertical",
+          "side": "left"
+        },
+        {
+          "type": "linear",
+          "from": "faces(\"<X\")",
+          "to": "faces(\"%CYLINDER\").faces(\"<X[1]\")",
+          "direction": "horizontal",
+          "side": "below"
+        },
+        {
+          "type": "diameter",
+          "of": "faces(\"%CYLINDER\").faces(\"<X[1]\")",
+          "side": "below"
+        }
+      ],
+      "gdt": [
+        {
+          "attach": "faces(\">Z\")",
+          "characteristic": "flatness",
+          "tolerance": 0.05
+        },
+        {
+          "attach": "faces(\">X\")",
+          "characteristic": "perpendicularity",
+          "tolerance": 0.1,
+          "datums": [
+            "A"
+          ]
+        }
+      ],
+      "datums": [
+        {
+          "label": "A",
+          "attach": "faces(\"<Z\")"
+        }
+      ],
+      "notes": [
+        {
+          "text": "BREAK EDGE 0.5 MAX"
+        }
+      ],
+      "datum_targets": [
+        {
+          "label": "A1",
+          "kind": "point",
+          "attach": "faces(\"<Z\")",
+          "point": [
+            15,
+            30,
+            0
+          ]
+        },
+        {
+          "label": "A2",
+          "kind": "point",
+          "attach": "faces(\"<Z\")",
+          "point": [
+            85,
+            30,
+            0
+          ]
+        }
+      ],
+      "sections": [
+        {
+          "label": "A",
+          "position": "left",
+          "through": "faces(\"%CYLINDER\").faces(\"<X[1]\")",
+          "dimensions": [
+            {
+              "type": "diameter",
+              "of": "faces(\"%CYLINDER\").faces(\"<X[1]\")",
+              "side": "below"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

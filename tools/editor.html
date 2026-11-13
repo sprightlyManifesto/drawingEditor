@@ -1,0 +1,1996 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Drawing Editor</title>
+<style>
+  :root {
+    --bg: #eceef1; --panel: #ffffff; --ink: #1d2330; --muted: #667085; --line: #d0d5dd;
+    --accent: #0b63ce; --accent-soft: #e3eefc; --sheet-shadow: 0 2px 14px rgba(16, 24, 40, .14);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1b1e24; --panel: #252931; --ink: #e6e8ec; --muted: #9aa3b2; --line: #3a404b;
+      --accent: #5aa2ff; --accent-soft: #1f3550; --sheet-shadow: 0 2px 14px rgba(0, 0, 0, .5);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--bg); color: var(--ink); font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+         display: flex; flex-direction: column; overflow: hidden; }
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 16px;
+           background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 15px; margin: 0 12px 0 0; font-weight: 600; }
+  button, label.btn { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line);
+           border-radius: 6px; padding: 5px 11px; cursor: pointer; }
+  button:hover:not(:disabled), label.btn:hover { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary, label.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .sep { width: 1px; align-self: stretch; background: var(--line); margin: 0 4px; }
+  #file { display: none; }
+  select { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+           padding: 4px 8px; max-width: 32ch; }
+  /* status text never changes the toolbar's height (that would move the drawing under the pointer) */
+  #status { color: var(--muted); flex: 1 1 0; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #status.err { color: #c2410c; }
+  #warnBtn { border-color: #f0b429; }
+  #warnings { position: absolute; right: 16px; top: 12px; z-index: 2; width: min(520px, calc(100% - 32px)); max-height: 60%;
+              overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+              box-shadow: var(--sheet-shadow); padding: 10px 14px; font-size: 13px; }
+  #warnings ul { margin: 6px 0 0; padding-left: 18px; }
+  #warnings li { margin: 3px 0; }
+  #warnings[hidden] { display: none; }
+  #empty code { font: 13px ui-monospace, monospace; background: var(--accent-soft); color: var(--ink); padding: 1px 5px; border-radius: 4px; }
+  #name.dirty::after { content: " • unsaved"; color: var(--accent, #c60); }
+  #name { color: var(--muted); margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40ch; }
+  main { position: relative; flex: 1; overflow: hidden; }
+  #stage { position: absolute; inset: 0; touch-action: none; }
+  #stage svg.drawing { width: 100%; height: 100%; display: block; }
+  #empty { position: absolute; inset: 24px; border: 2px dashed var(--line); border-radius: 12px; display: grid;
+           place-items: center; text-align: center; color: var(--muted); }
+  #empty strong { color: var(--ink); display: block; font-size: 16px; margin-bottom: 6px; }
+  #empty[hidden] { display: none; }
+  main.drag #empty { border-color: var(--accent); background: var(--accent-soft); }
+  footer { padding: 6px 16px; background: var(--panel); border-top: 1px solid var(--line); color: var(--muted); font-size: 12.5px; }
+  kbd { font: 11.5px ui-monospace, monospace; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; }
+
+  /* editing affordances inside the drawing */
+  #stage.can-move { cursor: move; }
+  svg.drawing .hov line, svg.drawing .hov path, svg.drawing .hov circle,
+  svg.drawing .hov rect, svg.drawing .hov polygon:not(.fill) { stroke: #0b63ce !important; }
+  svg.drawing .hov text, svg.drawing .hov .fill { fill: #0b63ce !important; }
+  svg.drawing .sel line, svg.drawing .sel path, svg.drawing .sel circle,
+  svg.drawing .sel rect, svg.drawing .sel polygon:not(.fill) { stroke: #d9480f !important; }
+  svg.drawing .sel text, svg.drawing .sel .fill { fill: #d9480f !important; }
+  svg.drawing.panning { cursor: grabbing; }
+  dialog#annDlg { width: min(780px, calc(100vw - 32px)); padding: 0; border: 1px solid var(--line); border-radius: 10px;
+                  background: var(--panel); color: var(--ink); box-shadow: 0 12px 40px rgba(0, 0, 0, .3); }
+  dialog#annDlg::backdrop { background: rgba(15, 20, 30, .35); }
+  #annDlg .head { display: flex; align-items: baseline; gap: 10px; padding: 12px 16px 8px; }
+  #annDlg .head strong { font-size: 15px; }
+  #annSheet { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; padding: 0 16px 10px; color: var(--muted); }
+  #annSheet[hidden] { display: none; }
+  #annSheet label { display: inline-flex; align-items: center; gap: 6px; }
+  #annSheet input { width: 6em; }
+  #annDlg .head code { color: var(--muted); font: 12px ui-monospace, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  dialog#annDlg { width: min(1280px, calc(100vw - 32px)); }
+  #annBody { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  #annEditor { height: min(62vh, 600px); }
+  #annPreviewBox { display: flex; flex-direction: column; border-left: 1px solid var(--line); min-height: 0; }
+  #annPreviewHead { display: flex; gap: 8px; align-items: baseline; padding: 6px 12px; font-size: 12.5px; color: var(--muted); border-bottom: 1px solid var(--line); }
+  #annPreviewHead strong { color: var(--ink); font-weight: 600; }
+  #annPreviewMsg.err { color: #c2410c; }
+  #annPreview { flex: 1; min-height: 0; background: #fff; position: relative; }
+  #annPreview svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #annPreview.stale svg { opacity: .55; }
+  @media (max-width: 900px) {
+    #annBody { grid-template-columns: 1fr; }
+    #annEditor { height: 38vh; }
+    #annPreviewBox { border-left: 0; border-top: 1px solid var(--line); height: 34vh; }
+  }
+  #selPanel { position: absolute; left: 16px; bottom: 12px; z-index: 2; width: min(560px, calc(100% - 32px)); max-height: 45%;
+              overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+              box-shadow: var(--sheet-shadow); padding: 10px 14px; font-size: 13px; }
+  #selPanel[hidden] { display: none; }
+  #selPanel .row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+  #selPanel code { flex: 1; font: 12.5px ui-monospace, monospace; background: var(--accent-soft); padding: 3px 6px; border-radius: 4px;
+                   overflow-x: auto; white-space: nowrap; }
+  #selPanel .items { color: var(--muted); margin-top: 4px; }
+  #selPanel button { padding: 2px 8px; font-size: 12.5px; }
+  #selPanel .add { flex-wrap: wrap; border-top: 1px solid var(--line, #8884); padding-top: 6px; }
+  /* pick layer (faces / edges / vertices) */
+  svg.drawing.picking .pick, svg.drawing .pick.has-sel { display: inline; }
+  svg.drawing .pick .pk { fill: none; stroke: none; pointer-events: none; }
+  svg.drawing.picking .pick [data-face] > path[fill-rule] { fill: transparent; pointer-events: fill; }
+  svg.drawing.picking .pick [data-face] > path:not([fill-rule]), svg.drawing.picking .pick [data-edge] > path {
+    stroke: transparent; stroke-width: 8px; stroke-linecap: round; vector-effect: non-scaling-stroke; pointer-events: stroke; }
+  svg.drawing.picking .pick [data-vertex] > circle { fill: transparent; pointer-events: fill; }
+  svg.drawing .pick .pk-hov > path[fill-rule] { fill: rgba(11, 99, 206, .16); }
+  /* highlights keep the 8px hit width, so hovering never changes what is under the pointer */
+  svg.drawing .pick .pk-hov > path:not([fill-rule]) { stroke: rgba(11, 99, 206, .4); }
+  svg.drawing .pick .pk-hov > circle { fill: rgba(11, 99, 206, .9); }
+  svg.drawing .pick .pk-sel > path[fill-rule] { fill: rgba(217, 72, 15, .2); }
+  svg.drawing .pick .pk-sel > path:not([fill-rule]) { stroke: rgba(217, 72, 15, .5); stroke-width: 8px; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+  svg.drawing .pick .pk-sel > circle { fill: rgba(217, 72, 15, .95); }
+  svg.drawing .pick .pk-sel { display: inline; }
+  #annEditor textarea.fallback { width: 100%; height: 100%; border: 0; resize: none; padding: 10px 14px;
+                                 font: 13px/1.5 ui-monospace, monospace; background: var(--panel); color: var(--ink); }
+  #annDlg .foot { display: flex; align-items: center; gap: 8px; padding: 10px 16px; }
+  #annArrows { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12.5px; }
+  #annArrows[hidden] { display: none; }
+  #annArrows .pad { display: grid; grid-template-columns: repeat(3, 22px); grid-template-rows: repeat(3, 18px); gap: 1px; }
+  #annArrows .pad button { padding: 0; font-size: 12px; line-height: 1; min-width: 0; }
+  #annMsg { flex: 1; color: var(--muted); font-size: 12.5px; }
+  #annMsg.err { color: #c2410c; }
+  .mode { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+  @media (max-width: 640px) { #name { display: none; } footer .long { display: none; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Drawing editor</h1>
+  <select id="drawings" title="Drawing JSON files in the served folder" disabled><option value="">Drawings in folder…</option></select>
+  <label class="btn" for="file" title="Open a drawing JSON from elsewhere; its STEP file is looked up by name in the served folder">Open JSON…</label>
+  <input id="file" type="file" accept=".json,application/json">
+  <button id="rerender" disabled title="Render the JSON again (after editing it), keeping your moves where the annotations still match (R)">Re-render</button>
+  <button id="saveJson" disabled title="Save the drawing JSON with your edits (Ctrl+S)">Save</button>
+  <button id="saveAs" disabled title="Save the drawing JSON under a new name in the served folder (Ctrl+Shift+S)">Save as…</button>
+  <span id="status"></span>
+  <button id="warnBtn" hidden></button>
+  <span class="sep"></span>
+  <label class="mode" title="What clicking picks (Tab cycles, Shift+Tab goes back)">Select
+    <select id="mode">
+      <option value="ann">Annotations</option>
+      <option value="view">Views</option>
+      <option value="geom">Geometry</option>
+    </select></label>
+  <span class="sep"></span>
+  <button id="undo" disabled title="Undo a move or a deletion (Ctrl+Z)">Undo</button>
+  <button id="redo" disabled title="Redo (Ctrl+Shift+Z)">Redo</button>
+  <button id="reset" disabled title="Put the selected item back where stepdraw placed it">Reset selected</button>
+  <button id="resetAll" disabled>Reset all</button>
+  <span class="sep"></span>
+  <button id="fit" disabled title="Fit sheet (F)">Fit</button>
+  <button id="save" class="primary" disabled>Download SVG</button>
+  <span id="name"></span>
+</header>
+<main id="main">
+  <div id="stage"></div>
+  <div id="warnings" hidden></div>
+  <div id="selPanel" hidden></div>
+  <div id="empty"><div id="emptyMsg"><strong>Choose a drawing JSON</strong>from the list, open one, or drop it here. stepdraw renders it, then dimensions, GD&amp;T frames, datums and notes can be dragged; their leaders and extension lines stay attached.</div></div>
+</main>
+<dialog id="annDlg">
+  <div class="head"><strong id="annTitle">Annotation</strong><code id="annPath"></code></div>
+  <div id="annSheet" hidden>
+    <label>Scale of view <span id="annScaleView"></span> <input id="annScale" type="number" min="0.01" step="0.1" title="Scale of the first base view, shown in the title block (views[0].scale)"></label>
+    <label>Sheet <select id="annSize" title="Sheet size"><option>A0</option><option>A1</option><option>A2</option><option>A3</option><option>A4</option></select></label>
+    <select id="annOrient" title="Sheet orientation"><option value="landscape">Landscape</option><option value="portrait">Portrait</option></select>
+  </div>
+  <div id="annBody">
+    <div id="annEditor"></div>
+    <div id="annPreviewBox">
+      <div id="annPreviewHead"><strong>Preview</strong><span id="annPreviewMsg"></span></div>
+      <div id="annPreview"></div>
+    </div>
+  </div>
+  <div class="foot">
+    <div id="annArrows" hidden title="Add a projected view">
+      <span class="lbl">Add view</span>
+      <div class="pad">
+        <button data-dir="up" style="grid-area: 1 / 2">↑</button>
+        <button data-dir="left" style="grid-area: 2 / 1">←</button>
+        <button data-dir="right" style="grid-area: 2 / 3">→</button>
+        <button data-dir="down" style="grid-area: 3 / 2">↓</button>
+      </div>
+    </div>
+    <span id="annMsg"></span>
+    <button id="annInsert" hidden title="Insert the selector of the geometry selected on the drawing at the cursor"></button>
+    <button id="annCancel">Cancel</button>
+    <button id="annApply" class="primary" title="Use the edit and re-render (Ctrl+Enter); Save writes it to the file">Apply</button>
+  </div>
+</dialog>
+<footer>
+  Pick a drawing, then drag annotations or views to move them; <kbd>Tab</kbd> cycles what can be selected (annotations, views, geometry). Aligned views slide only along their projection axis and follow their parent view. Edit the JSON and press Re-render (<kbd>R</kbd>) to update. <span class="long"><kbd>Shift</kbd>-drag a dimension to move only its line (text stays in place along it). Double-click resets one item, right-click an annotation or a view to edit its JSON (click the title block for it and the sheet size), <kbd>Del</kbd> deletes the selected one (<kbd>Ctrl</kbd>+<kbd>Z</kbd> brings it back). In Geometry mode click faces, edges and points to get their selector (<kbd>Ctrl</kbd>+click adds).
+  Arrow keys nudge the selection (<kbd>Shift</kbd> ×10). Drag the background to pan, scroll to zoom.</span>
+</footer>
+
+<script>
+"use strict";
+const NS = "http://www.w3.org/2000/svg";
+const $ = id => document.getElementById(id);
+const stage = $("stage"), main = $("main");
+
+// ------------------------------------------------------------ vectors
+const V = (x, y) => ({ x, y });
+const add = (a, b) => V(a.x + b.x, a.y + b.y);
+const sub = (a, b) => V(a.x - b.x, a.y - b.y);
+const mul = (a, k) => V(a.x * k, a.y * k);
+const dot = (a, b) => a.x * b.x + a.y * b.y;
+const len = a => Math.hypot(a.x, a.y);
+const norm = a => { const l = len(a); return l > 1e-12 ? mul(a, 1 / l) : V(0, 0); };
+const perp = a => V(-a.y, a.x);
+const fromAngle = t => V(Math.cos(t), Math.sin(t));
+const pt = s => { const [x, y] = (s || "0,0").split(",").map(Number); return V(x, y); };
+const num = (s, d = 0) => (s === undefined || s === "" || isNaN(+s)) ? d : +s;
+const r3 = x => Math.round(x * 1000) / 1000;
+
+// ------------------------------------------------------------ svg helpers
+function el(tag, attrs) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  return e;
+}
+const line = (a, b, cls = "thin") => el("line", { class: cls, x1: r3(a.x), y1: r3(a.y), x2: r3(b.x), y2: r3(b.y) });
+const poly = (pts, cls = "thin") => el("path", { class: cls, d: pts.map((p, i) => (i ? "L" : "M") + r3(p.x) + "," + r3(p.y)).join(" ") });
+const fill = pts => el("polygon", { class: "fill", points: pts.map(p => r3(p.x) + "," + r3(p.y)).join(" ") });
+/** Filled arrow head with its tip at `tip`, its tail towards `towardTail`. */
+function arrow(tip, towardTail, ar) {
+  const d = norm(towardTail), n = mul(perp(d), ar.w / 2), base = add(tip, mul(d, ar.l));
+  return fill([tip, add(base, n), sub(base, n)]);
+}
+function part(g, role) {
+  let p = g.querySelector(`:scope > g[data-role="${role}"]`);
+  if (!p) { p = el("g", { "data-role": role }); g.appendChild(p); }
+  return p;
+}
+function clear(p) { while (p.firstChild) p.removeChild(p.firstChild); return p; }
+function shift(p, d) {
+  if (Math.abs(d.x) < 1e-9 && Math.abs(d.y) < 1e-9) p.removeAttribute("transform");
+  else p.setAttribute("transform", `translate(${r3(d.x)} ${r3(d.y)})`);
+}
+const arrowOf = g => { const [l, w] = (g.dataset.arrow || "3,1").split(",").map(Number); return { l, w }; };
+
+// ------------------------------------------------------------ annotation state
+// Each annotation keeps its offset from where stepdraw put it in data-
+// attributes, so an edited file can be opened and edited again.
+const STATE_KEYS = { linear: ["off", "slide"], angle: ["dr"], leader: ["dx", "dy"], ordinate: ["dx", "dy"], free: ["dx", "dy"] };
+STATE_KEYS.view = ["dx", "dy"];
+const isView = g => g.classList.contains("view");
+const kindOf = g => isView(g) ? "view" : g.dataset.kind;
+const keysOf = g => STATE_KEYS[kindOf(g)] || [];
+const getState = g => Object.fromEntries(keysOf(g).map(k => [k, num(g.dataset[k])]));
+function setState(g, s) {
+  for (const k of keysOf(g)) {
+    const v = r3(s[k] || 0);
+    if (v === 0) delete g.dataset[k]; else g.dataset[k] = v;
+  }
+  render(g);
+}
+
+/** Apply a drag `d` (local mm) to the state `s0` the drag started from. */
+function dragged(g, s0, d, ev) {
+  switch (kindOf(g)) {
+    case "view": {                  // an aligned view slides only along its projection axis
+      const ax = g.dataset.axis;
+      return { dx: s0.dx + (ax === "y" ? 0 : d.x), dy: s0.dy + (ax === "x" ? 0 : d.y) };
+    }
+    case "linear": {
+      const n = pt(g.dataset.n), t = norm(sub(pt(g.dataset.pb), pt(g.dataset.pa)));
+      return { off: s0.off + dot(d, n), slide: s0.slide + (ev.shiftKey ? 0 : dot(d, t)) };
+    }
+    case "angle": {
+      const ip = pt(g.dataset.ip), da = norm(sub(pt(g.dataset.fa), ip));
+      const bis = fromAngle(Math.atan2(da.y, da.x) + num(g.dataset.sweep) / 2);
+      return { dr: s0.dr + dot(d, bis) };
+    }
+    default: return { dx: s0.dx + d.x, dy: s0.dy + d.y };
+  }
+}
+
+// ------------------------------------------------------------ redraw
+function render(g) {
+  if (isView(g)) { renderViews(); return; }
+  const k = g.dataset.kind;
+  if (k === "linear") renderLinear(g);
+  else if (k === "angle") renderAngle(g);
+  else if (k === "leader") renderLeader(g);
+  else if (k === "ordinate") renderOrdinate(g);
+  else if (k === "free") shift(part(g, "sym"), V(num(g.dataset.dx), num(g.dataset.dy)));
+}
+
+// ------------------------------------------------------------ views
+const viewById = (id, root = svg) => root.querySelector(`:scope > g.view[id="${CSS.escape(id)}"]`);
+/** A view's offset from where stepdraw put it, including what it inherits
+ *  from the view it is aligned with. */
+function viewOffset(g, depth = 0) {
+  const own = V(num(g.dataset.dx), num(g.dataset.dy));
+  const p = g.dataset.parent && depth < 20 ? viewById(g.dataset.parent, g.ownerSVGElement) : null;
+  if (!p) return own;
+  const po = viewOffset(p, depth + 1);
+  return add(own, g.dataset.axis === "x" ? V(0, po.y) : V(po.x, 0));
+}
+function initViews(root) {
+  for (const g of root.querySelectorAll(":scope > g.view")) {
+    if (g.dataset.ox === undefined) {
+      const m = /translate\(\s*([-\d.e]+)[\s,]+([-\d.e]+)/.exec(g.getAttribute("transform") || "");
+      g.dataset.ox = m ? +m[1] : 0; g.dataset.oy = m ? +m[2] : 0;
+    }
+  }
+}
+function renderViews(root = svg) {
+  for (const g of root.querySelectorAll(":scope > g.view")) {
+    const o = viewOffset(g);
+    g.setAttribute("transform", `translate(${r3(num(g.dataset.ox) + o.x)} ${r3(num(g.dataset.oy) + o.y)})`);
+  }
+}
+
+function renderLinear(g) {
+  const ds = g.dataset, n = pt(ds.n), ov = num(ds.ov, 2), off = num(ds.off), slide = num(ds.slide);
+  const pa0 = pt(ds.pa), pb0 = pt(ds.pb), t = norm(sub(pb0, pa0));
+  const pa = add(pa0, mul(n, off)), pb = add(pb0, mul(n, off));
+  // extension lines from the feature to just beyond the dimension line
+  const ext = clear(part(g, "ext"));
+  for (const [e, p] of [[pt(ds.ea), pa], [pt(ds.eb), pb]]) {
+    const s = dot(sub(p, e), n);
+    if (Math.abs(s) > 0.3) ext.appendChild(line(e, add(p, mul(n, ov * Math.sign(s)))));
+  }
+  shift(part(g, "static"), mul(n, off));
+  const text = part(g, "text");
+  shift(text, add(mul(n, off), mul(t, slide)));
+  // text slid beyond the extension lines: continue the dimension line to it
+  const dimext = clear(part(g, "dimext"));
+  const bb = text.getBBox();
+  if (bb.width > 0) {
+    const L = dot(sub(pb0, pa0), t);
+    const proj = [V(bb.x, bb.y), V(bb.x + bb.width, bb.y), V(bb.x, bb.y + bb.height), V(bb.x + bb.width, bb.y + bb.height)]
+      .map(c => dot(sub(c, pa0), t) + slide);
+    const lo = Math.min(...proj), hi = Math.max(...proj);
+    const span0 = Math.min(0, L), span1 = Math.max(0, L);
+    if (hi < span0 - 0.5) dimext.appendChild(line(add(pa, mul(t, span0)), add(pa, mul(t, hi + 0.5))));
+    else if (lo > span1 + 0.5) dimext.appendChild(line(add(pa, mul(t, span1)), add(pa, mul(t, lo - 0.5))));
+  }
+}
+
+function renderAngle(g) {
+  const ds = g.dataset, ar = arrowOf(g), ip = pt(ds.ip), fa = pt(ds.fa), fb = pt(ds.fb);
+  const sweep = num(ds.sweep), dr = num(ds.dr), gap = num(ds.gap, 1), ov = num(ds.ov, 2);
+  const R = Math.max(num(ds.r) + dr, 2);
+  const da = norm(sub(fa, ip)), db = norm(sub(fb, ip)), s0 = Math.atan2(da.y, da.x), sg = Math.sign(sweep) || 1;
+  const N = 48, arc = [];
+  for (let i = 0; i <= N; i++) arc.push(add(ip, mul(fromAngle(s0 + sweep * i / N), R)));
+  const dyn = clear(part(g, "dyn"));
+  dyn.appendChild(poly(arc));
+  const tan = th => V(-Math.sin(th), Math.cos(th));
+  dyn.appendChild(arrow(arc[0], mul(tan(s0), sg), ar));
+  dyn.appendChild(arrow(arc[N], mul(tan(s0 + sweep), -sg), ar));
+  for (const [f, d] of [[fa, da], [fb, db]])
+    if (R > len(sub(f, ip))) dyn.appendChild(line(add(f, mul(d, gap)), add(ip, mul(d, R + ov))));
+  shift(part(g, "text"), mul(fromAngle(s0 + sweep / 2), R - num(ds.r)));
+}
+
+function renderOrdinate(g) {
+  const ds = g.dataset, d = V(num(ds.dx), num(ds.dy));
+  const lead = clear(part(g, "lead"));
+  lead.appendChild(poly([pt(ds.p0), pt(ds.p1), add(pt(ds.p2), d), add(pt(ds.p3), d)]));
+  shift(part(g, "text"), d);
+}
+
+function renderLeader(g) {
+  const ds = g.dataset, ar = arrowOf(g), d = V(num(ds.dx), num(ds.dy));
+  const tip0 = pt(ds.tip), mode = ds.mode;
+  const c = pt(ds.c), r = num(ds.r);
+  let s0 = add(pt(ds.s0), d), s1 = add(pt(ds.s1), d);
+  const sc = add(pt(ds.sc), d);
+  // where the leader meets the feature for a given elbow
+  const tipFor = knee => {
+    if (mode === "radial") {
+      const u = sub(knee, c);
+      return len(u) > 1e-9 ? add(c, mul(norm(u), r)) : tip0;
+    }
+    if (mode === "edge") {
+      const e0 = pt(ds.e0), e1 = pt(ds.e1), e = sub(e1, e0), l2 = dot(e, e);
+      if (l2 < 1e-12) return tip0;
+      const f = Math.min(1, Math.max(0, dot(sub(knee, e0), e) / l2));
+      return add(e0, mul(e, f));
+    }
+    return tip0;
+  };
+  // the shoulder comes out of the side of the symbol facing the feature
+  const side0 = Math.sign(tip0.x - pt(ds.sc).x);
+  let tip = tipFor(s1);
+  if (side0 !== 0 && Math.sign(tip.x - sc.x) === -side0) {
+    s0 = V(2 * sc.x - s0.x, s0.y);
+    s1 = V(2 * sc.x - s1.x, s1.y);
+    tip = tipFor(s1);
+  }
+  const knee = s1;
+  const lead = clear(part(g, "lead"));
+  lead.appendChild(line(s0, s1));
+  if (ds.around) lead.appendChild(el("circle", { class: "thin", cx: r3(knee.x), cy: r3(knee.y), r: ds.around }));   // all around
+  const u = norm(sub(knee, tip));
+  if (ds.radius) {
+    lead.appendChild(line(c, knee));
+    lead.appendChild(arrow(tip, sub(c, tip), ar));
+  } else {
+    switch (ds.term) {
+      case "arrow":
+        lead.appendChild(line(knee, tip));
+        lead.appendChild(arrow(tip, u, ar));
+        break;
+      case "dot":
+        lead.appendChild(line(knee, tip));
+        lead.appendChild(el("circle", { class: "fill", cx: r3(tip.x), cy: r3(tip.y), r: 0.6 }));
+        break;
+      case "triangle": {
+        let n = u;
+        if (mode === "edge") {                      // square to the edge, towards the elbow
+          n = norm(perp(sub(pt(ds.e1), pt(ds.e0))));
+          if (dot(n, sub(knee, tip)) < 0) n = mul(n, -1);
+        }
+        const th = 2.6, t = mul(perp(n), th * 0.6), apex = add(tip, mul(n, th));
+        lead.appendChild(line(knee, apex));
+        lead.appendChild(fill([add(tip, t), sub(tip, t), apex]));
+        break;
+      }
+      case "cross": {
+        lead.appendChild(line(knee, tip));
+        const k = 1.6;
+        lead.appendChild(line(add(tip, V(-k, -k)), add(tip, V(k, k)), "visible"));
+        lead.appendChild(line(add(tip, V(-k, k)), add(tip, V(k, -k)), "visible"));
+        break;
+      }
+      default:
+        lead.appendChild(line(knee, tip));
+    }
+    if (ds.through) {                                // diameter: across the circle, second arrow
+      const far = sub(mul(c, 2), tip);
+      lead.appendChild(line(far, tip));
+      lead.appendChild(arrow(far, sub(c, far), ar));
+    }
+  }
+  shift(part(g, "sym"), d);
+}
+
+// ------------------------------------------------------------ document
+let svg = null, fileName = "drawing.svg", viewBox0 = null, vb = null;
+let undoStack = [], redoStack = [], selected = null;
+
+function sanitize(root) {
+  root.querySelectorAll("script, foreignObject, iframe, object, embed").forEach(e => e.remove());
+  for (const e of [root, ...root.querySelectorAll("*")]) {
+    for (const a of [...e.attributes]) {
+      const v = a.value.trim().toLowerCase();
+      if (a.name.toLowerCase().startsWith("on") || ((a.name === "href" || a.name.endsWith(":href")) && v.startsWith("javascript:")))
+        e.removeAttribute(a.name);
+    }
+  }
+}
+
+function load(text, name, keep) {
+  const doc = new DOMParser().parseFromString(text, "image/svg+xml");
+  const root = doc.documentElement;
+  if (root.nodeName !== "svg" || doc.querySelector("parsererror")) { setStatus("stepdraw returned an unreadable SVG", true); return false; }
+  sanitize(root);
+  if (svg) svg.remove();
+  svg = document.importNode(root, true);
+  svg.dataset.width = svg.getAttribute("width") || "";
+  svg.dataset.height = svg.getAttribute("height") || "";
+  svg.removeAttribute("width"); svg.removeAttribute("height");
+  svg.classList.add("drawing");
+  let vbs = (svg.getAttribute("viewBox") || "").split(/[\s,]+/).map(Number);
+  clear(stage).appendChild(svg);
+  if (vbs.length !== 4 || vbs.some(isNaN)) { const b = svg.getBBox(); vbs = [b.x, b.y, b.width, b.height]; }
+  viewBox0 = vbs; setVB(vbs.slice());
+  fileName = (name || "drawing.json").replace(/\.json$/i, "") + ".svg";
+  updateDirty();
+  $("empty").hidden = true;
+  undoStack = []; redoStack = []; select(null);
+  initViews(svg);
+  for (const g of svg.querySelectorAll(":scope > g.view")) {
+    const k = keep && keep.views && keep.views[g.id];
+    if (k) { if (k.dx) g.dataset.dx = r3(k.dx); if (k.dy) g.dataset.dy = r3(k.dy); }
+  }
+  renderViews();
+  const anns = [...svg.querySelectorAll("g.ann")];
+  // moves made before a re-render are kept when the annotations still match
+  let kept = false;
+  if (keep && keep.anns.length && keep.anns.every(k => k.src) && anns.every(g => g.dataset.src)) {
+    // by JSON path (after an entry was deleted or put back, the paths after it shift)
+    const by = new Map();
+    for (const k of keep.anns) { const p = keep.remap ? keep.remap(k.src) : k.src; if (p) by.set(p + "|" + k.kind, k); }
+    anns.forEach(g => { const k = by.get(g.dataset.src + "|" + g.dataset.kind); if (k) for (const key of keysOf(g)) if (k.s[key]) g.dataset[key] = r3(k.s[key]); });
+    kept = true;
+  } else if (keep && keep.anns.length === anns.length && keep.anns.every((k, i) => k.kind === anns[i].dataset.kind)) {
+    anns.forEach((g, i) => { for (const k of keysOf(g)) if (keep.anns[i].s[k]) g.dataset[k] = r3(keep.anns[i].s[k]); });
+    kept = true;
+  }
+  anns.forEach(render);
+  svg.classList.toggle("picking", $("mode").value === "geom");
+  showPicks();
+  for (const id of ["fit", "save", "resetAll"]) $(id).disabled = false;
+  refreshButtons();
+  return kept;
+}
+
+// ------------------------------------------------------------ view (pan / zoom)
+function setVB(v) { vb = v; svg.setAttribute("viewBox", v.map(r3).join(" ")); }
+function fit() { if (svg) setVB(viewBox0.slice()); }
+function screenToSvg(x, y) { return new DOMPoint(x, y).matrixTransform(svg.getScreenCTM().inverse()); }
+stage.addEventListener("wheel", e => {
+  if (!svg) return;
+  e.preventDefault();
+  const k = Math.exp(e.deltaY * (e.deltaMode ? 0.05 : 0.0015));
+  const p = screenToSvg(e.clientX, e.clientY);
+  const w = Math.min(Math.max(vb[2] * k, viewBox0[2] / 40), viewBox0[2] * 4), s = w / vb[2];
+  setVB([p.x - (p.x - vb[0]) * s, p.y - (p.y - vb[1]) * s, w, vb[3] * s]);
+}, { passive: false });
+
+// ------------------------------------------------------------ selection, history
+let selectedHl = null;
+/** Select `g` (an annotation or a view), highlighting `hl` (default `g`). */
+function select(g, hl = g) {
+  if (selectedHl) selectedHl.classList.remove("sel");
+  selected = g; selectedHl = g ? hl : null;
+  if (selectedHl) selectedHl.classList.add("sel");
+  refreshButtons();
+}
+let hovered = null;
+function hover(hl) {
+  if (hovered === hl) return;
+  if (hovered) hovered.classList.remove("hov");
+  hovered = hl;
+  if (hl && !hl.closest(".pick")) hl.classList.add("hov");     // pick items have their own highlight
+  stage.classList.toggle("can-move", !!hl);
+}
+function refreshButtons() {
+  $("undo").disabled = !undoStack.length && !deleted.length;
+  $("redo").disabled = !redoStack.length;
+  $("reset").disabled = !selected;
+}
+const same = (a, b) => Object.keys(a).every(k => Math.abs(a[k] - b[k]) < 1e-6);
+function commit(changes) {            // changes: [{g, before, after}]
+  changes = changes.filter(c => !same(c.before, c.after));
+  if (!changes.length) return;
+  undoStack.push(changes); redoStack = [];
+  refreshButtons();
+}
+function undo() {
+  const c = undoStack.pop(); if (!c) return;
+  c.forEach(x => setState(x.g, x.before)); redoStack.push(c); refreshButtons();
+}
+function redo() {
+  const c = redoStack.pop(); if (!c) return;
+  c.forEach(x => setState(x.g, x.after)); undoStack.push(c); refreshButtons();
+}
+const zero = g => Object.fromEntries(keysOf(g).map(k => [k, 0]));
+function reset(gs) {
+  const changes = gs.map(g => ({ g, before: getState(g), after: zero(g) }));
+  changes.forEach(c => setState(c.g, c.after));
+  commit(changes);
+}
+
+// ------------------------------------------------------------ dragging
+/** The annotation under the pointer, allowing a few pixels of slack for thin lines. */
+function annAt(e) {
+  const hit = e.target.closest && e.target.closest("g.ann");
+  if (hit && svg.contains(hit)) return hit;
+  let best = null, area = Infinity;
+  for (const g of svg.querySelectorAll("g.ann")) {
+    const b = g.getBoundingClientRect(), m = 4;
+    if (e.clientX >= b.left - m && e.clientX <= b.right + m && e.clientY >= b.top - m && e.clientY <= b.bottom + m) {
+      const a = (b.width + 2 * m) * (b.height + 2 * m);
+      if (a < area) { area = a; best = g; }
+    }
+  }
+  // only accept the slack hit when the pointer is close to one of its strokes / texts
+  if (best && ![...best.querySelectorAll("line, path, polygon, circle, text, rect")].some(s => {
+    const b = s.getBoundingClientRect(), q = 4;
+    return e.clientX >= b.left - q && e.clientX <= b.right + q && e.clientY >= b.top - q && e.clientY <= b.bottom + q;
+  })) best = null;
+  return best;
+}
+/** The view whose area (geometry and annotations) contains the pointer; the smallest wins. */
+function viewAt(e) {
+  let best = null, area = Infinity;
+  for (const g of svg.querySelectorAll(":scope > g.view")) {
+    const b = g.getBoundingClientRect();
+    if (e.clientX >= b.left && e.clientX <= b.right && e.clientY >= b.top && e.clientY <= b.bottom && b.width * b.height < area) {
+      area = b.width * b.height; best = g;
+    }
+  }
+  return best;
+}
+const geoPart = v => v.querySelector(":scope > g.geometry") || v;
+const PICK_KINDS = [["face", "faces"], ["edge", "edges"], ["vertex", "vertices"]];
+/** The face / edge / vertex of the pick layer under the pointer. */
+function entityAt(e) {
+  const t = e.target instanceof Element ? e.target.closest(".pick [data-face], .pick [data-edge], .pick [data-vertex]") : null;
+  if (!t || !svg.contains(t)) return null;
+  for (const [attr, kind] of PICK_KINDS) {
+    if (t.dataset[attr] !== undefined) return { kind, id: +t.dataset[attr], info: t.dataset.info || "", el: t, view: t.closest("g.view") };
+  }
+  return null;
+}
+/** What a click picks in the current selection mode: {g, hl, ent?} or null. */
+function pick(e) {
+  const mode = $("mode").value;
+  if (mode === "ann") {
+    const a = annAt(e);
+    if (a) return { g: a, hl: a };
+  }
+  // geometry mode picks single faces, edges and points, never whole views
+  if (mode === "geom") {
+    const ent = entityAt(e);
+    if (ent) return { g: null, hl: ent.el, ent };
+  }
+  if (mode === "view") {
+    const v = viewAt(e);
+    if (v) return { g: v, hl: v };
+  }
+  return null;
+}
+function local(g, e) {
+  const m = g.getScreenCTM().inverse();
+  const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(m);
+  return V(p.x, p.y);
+}
+let drag = null;
+stage.addEventListener("pointerdown", e => {
+  if (!svg || e.button > 1) return;
+  const hit = e.button === 0 ? pick(e) : null;
+  stage.setPointerCapture(e.pointerId);
+  if (hit && !hit.g) {
+    // geometry mode: a click on a face / edge / point selects it, a drag pans
+    drag = { pan: true, x: e.clientX, y: e.clientY, vb: vb.slice(), ent: hit.ent, add: e.ctrlKey || e.metaKey, moved: false };
+    svg.classList.add("panning");
+  } else if (hit) {
+    const g = hit.g;
+    if (!hit.ent) select(g, hit.hl);
+    // views are moved in sheet coordinates, annotations in their view's
+    const at = ev => { const p = screenToSvg(ev.clientX, ev.clientY); return V(p.x, p.y); };
+    const pos = isView(g) ? at : ev => local(g, ev);
+    // on a face / edge / vertex: a click selects it, a drag moves its view
+    drag = { g, pos, start: pos(e), s0: getState(g), ent: hit.ent, hl: hit.hl, x: e.clientX, y: e.clientY, moved: !hit.ent, add: e.ctrlKey || e.metaKey };
+  } else {
+    select(null);
+    if (!(e.ctrlKey || e.metaKey)) clearPicks();
+    drag = { pan: true, x: e.clientX, y: e.clientY, vb: vb.slice(), title: e.button === 0 && inTitleBlock(e) };
+    svg.classList.add("panning");
+  }
+  e.preventDefault();
+});
+stage.addEventListener("pointermove", e => {
+  if (!svg) return;
+  if (!drag) {
+    const h = pick(e);
+    hover(h && h.hl);
+    pickHover(h && h.ent);
+    return;
+  }
+  if (drag.pan) {
+    if ((drag.ent || drag.title) && !drag.moved) {
+      if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 4) return;
+      drag.moved = true;
+    }
+    // the sheet keeps its aspect ratio, so one scale serves both axes
+    const m = svg.getScreenCTM(), sx = 1 / m.a;
+    setVB([drag.vb[0] - (e.clientX - drag.x) * sx, drag.vb[1] - (e.clientY - drag.y) * sx, vb[2], vb[3]]);
+    return;
+  }
+  if (!drag.moved) {
+    if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 4) return;
+    drag.moved = true;
+    select(drag.g, geoPart(drag.g));
+  }
+  const d = sub(drag.pos(e), drag.start);
+  setState(drag.g, dragged(drag.g, drag.s0, d, e));
+});
+function endDrag() {
+  if (drag && drag.ent && !drag.moved) togglePick(drag.ent, drag.add);
+  else if (drag && drag.title && !drag.moved) openTitleEditor();     // a click on the title block
+  else if (drag && drag.g) commit([{ g: drag.g, before: drag.s0, after: getState(drag.g) }]);
+  if (svg) svg.classList.remove("panning");
+  drag = null;
+}
+stage.addEventListener("pointerup", endDrag);
+stage.addEventListener("pointercancel", endDrag);
+stage.addEventListener("dblclick", e => { const h = svg && pick(e); if (h && h.g) { select(h.g, h.hl); reset([h.g]); } });
+stage.addEventListener("pointerleave", () => { hover(null); pickHover(null); });
+
+// ------------------------------------------------------------ picked geometry
+const picks = new Map();          // "faces:12" -> {kind, id, info}
+let pickSelectors = {};           // kind -> selector for the picked items of that kind
+let hoverEnt = null;
+const pickKey = p => p.kind + ":" + p.id;
+const pickAttr = kind => PICK_KINDS.find(k => k[1] === kind)[0];
+function pickEls(p, root = svg) { return root ? [...root.querySelectorAll(`.pick [data-${pickAttr(p.kind)}="${p.id}"]`)] : []; }
+function pickHover(ent) {
+  if (hoverEnt) pickEls(hoverEnt).forEach(el => el.classList.remove("pk-hov"));
+  hoverEnt = ent;
+  if (ent) {
+    pickEls(ent).forEach(el => el.classList.add("pk-hov"));       // the same item in every view
+    setStatus(`${ent.kind === "faces" ? "Face" : ent.kind === "edges" ? "Edge" : "Point"} @${ent.id} · ${ent.info} — click to select, Ctrl+click to add`);
+  }
+}
+function togglePick(ent, add) {
+  const key = pickKey(ent);
+  if (!add) { const had = picks.has(key) && picks.size === 1; picks.clear(); if (!had) picks.set(key, ent); }
+  else if (picks.has(key)) picks.delete(key);
+  else picks.set(key, ent);
+  select(null);
+  showPicks();
+  updateSelectors();
+}
+function clearPicks() { if (!picks.size) return; picks.clear(); showPicks(); updateSelectors(); }
+function showPicks() {
+  if (!svg) return;
+  svg.querySelectorAll(".pick .pk-sel").forEach(el => el.classList.remove("pk-sel"));
+  for (const p of picks.values()) pickEls(p).forEach(el => el.classList.add("pk-sel"));
+  svg.querySelectorAll(".pick").forEach(g => g.classList.toggle("has-sel", !!g.querySelector(".pk-sel")));
+  renderSelPanel();
+}
+let selSeq = 0;
+async function updateSelectors() {
+  const seq = ++selSeq;
+  pickSelectors = {};
+  renderSelPanel();
+  const byKind = {};
+  for (const p of picks.values()) (byKind[p.kind] = byKind[p.kind] || []).push(p.id);
+  for (const kind in byKind) {
+    try {
+      const body = Object.assign(sourceBody(), { kind, ids: byKind[kind] });
+      const out = await (await fetch("/api/selector", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).json();
+      if (seq !== selSeq) return;
+      pickSelectors[kind] = out.error ? { error: out.error } : { sel: out.selector };
+    } catch (e) {
+      if (seq !== selSeq) return;
+      pickSelectors[kind] = { error: "stepdraw is not reachable" };
+    }
+    renderSelPanel();
+  }
+}
+const KIND_LABEL = { faces: ["face", "faces"], edges: ["edge", "edges"], vertices: ["point", "points"] };
+function renderSelPanel() {
+  const panel = $("selPanel");
+  clear(panel);
+  panel.hidden = !picks.size;
+  if (!picks.size) { refreshInsert(); return; }
+  const head = document.createElement("div");
+  head.className = "row";
+  const t = document.createElement("strong");
+  t.textContent = `Selected geometry (${picks.size})`;
+  t.style.flex = "1";
+  const clr = document.createElement("button");
+  clr.textContent = "Clear";
+  clr.onclick = clearPicks;
+  head.append(t, clr);
+  panel.appendChild(head);
+  const byKind = {};
+  for (const p of picks.values()) (byKind[p.kind] = byKind[p.kind] || []).push(p);
+  for (const kind in byKind) {
+    const items = byKind[kind];
+    const info = document.createElement("div");
+    info.className = "items";
+    const lbl = KIND_LABEL[kind][items.length === 1 ? 0 : 1];
+    info.textContent = `${items.length} ${lbl}: ` + items.map(p => `@${p.id} ${p.info}`).join(", ");
+    const row = document.createElement("div");
+    row.className = "row";
+    const code = document.createElement("code");
+    const st = pickSelectors[kind];
+    code.textContent = !st ? "finding a selector…" : st.error ? st.error : st.sel;
+    const copy = document.createElement("button");
+    copy.textContent = "Copy";
+    copy.disabled = !(st && st.sel);
+    copy.onclick = () => navigator.clipboard.writeText(st.sel).then(() => setStatus("Copied " + st.sel));
+    row.append(code, copy);
+    panel.append(info, row);
+  }
+  // new annotations on the selection
+  const add = document.createElement("div");
+  add.className = "row add";
+  for (const [key, label] of [["dimensions", "Add dimension"], ["gdt", "Add GD&T"], ["datums", "Add datum"], ["notes", "Add note"]]) {
+    const b = document.createElement("button");
+    b.textContent = label;
+    b.title = `Open the JSON editor with a new ${KIND_TITLES[key].toLowerCase()} for the selected geometry`;
+    b.disabled = !specText || addBusy;
+    b.onclick = () => addAnnotation(key);
+    add.appendChild(b);
+  }
+  panel.appendChild(add);
+  refreshInsert();
+}
+/** The request fields that identify the current drawing. */
+function sourceBody() { return source.path ? { path: source.path } : { json: source.json, name: source.name }; }
+// ------------------------------------------------------------ new annotations on the selection
+const selCache = new Map();
+/** A selector for model items `ids` of `kind` (cached until the next render). */
+async function selectorOf(kind, ids) {
+  const key = kind + ":" + ids.join(",");
+  if (!selCache.has(key)) {
+    const out = await postJson("/api/selector", Object.assign(sourceBody(), { kind, ids }));
+    if (out.error) throw new Error(out.error);
+    selCache.set(key, out.selector);
+  }
+  return selCache.get(key);
+}
+const vecOf = s => s ? s.split(" ").map(Number) : null;
+const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const unit3 = a => { const l = Math.hypot(...a) || 1; return a.map(x => x / l); };
+/** What a picked item is, for guessing the annotation. */
+function featureOf(p, view) {
+  const el = pickEls(p).find(e => e.closest("g.view") === view) || p.el;
+  const d = el.dataset, info = p.info || "";
+  let box = null;
+  try { box = el.getBBox(); } catch (e) { /* not rendered */ }
+  return {
+    p, el, info, box,
+    n: vecOf(d.n), dir: vecOf(d.d), verts: d.v ? d.v.split(" ").map(Number) : null,
+    round: /^(CIRCLE|CYLINDER|SPHERE)/.test(info),
+    arc: /^(ARC|TORUS)/.test(info),
+    size: (/[ØR]([\d.]+)/.exec(info) || [])[1],
+    centre: box ? [box.x + box.width / 2, box.y + box.height / 2] : [0, 0],
+    dir2: d.d ? dir2Of(el) : null,
+  };
+}
+/** Direction of a straight edge as drawn in the view (unit 2D vector). */
+function dir2Of(el) {
+  const path = el.querySelector("path, polyline, line");
+  try {
+    const L = path.getTotalLength(), a = path.getPointAtLength(0), b = path.getPointAtLength(L);
+    const l = Math.hypot(b.x - a.x, b.y - a.y);
+    return l > 1e-6 ? [(b.x - a.x) / l, (b.y - a.y) / l] : null;
+  } catch (e) { return null; }
+}
+/** Is a straight edge's projection vertical / horizontal in its view? */
+function lineAxis(f) {
+  if (!f.dir || !f.box) return null;
+  const { width: w, height: h } = f.box;
+  if (w < 0.02 * h + 0.01) return "v";
+  if (h < 0.02 * w + 0.01) return "h";
+  return "a";
+}
+/** Selector of all picked items of `fs` (one kind), or of each kind joined. */
+async function selectorOfAll(fs) {
+  const byKind = {};
+  for (const f of fs) (byKind[f.p.kind] = byKind[f.p.kind] || []).push(f.p.id);
+  const kinds = Object.keys(byKind);
+  if (kinds.length === 1) return selectorOf(kinds[0], byKind[kinds[0]]);
+  // mixed: faces win over edges over points
+  const k = ["faces", "edges", "vertices"].find(k => byKind[k]);
+  return selectorOf(k, byKind[k]);
+}
+/** All datum labels used in the drawing. */
+function datumLabels(spec) {
+  const out = new Set();
+  (function walk(o) {
+    if (Array.isArray(o)) { o.forEach(walk); return; }
+    if (!o || typeof o !== "object") return;
+    if (Array.isArray(o.datums)) for (const d of o.datums) if (d && typeof d.label === "string" && d.label) out.add(d.label);
+    if (typeof o.datum === "string" && o.datum) out.add(o.datum);
+    Object.values(o).forEach(walk);
+  })(spec);
+  return [...out].sort();
+}
+const sameRound = fs => fs.length > 0 && fs.every(f => f.round) && fs.every(f => f.size === fs[0].size);
+
+/** The most likely dimension for the selected features. */
+async function guessDimension(fs) {
+  const sel = f => selectorOf(f.p.kind, [f.p.id]);
+  if (fs.length === 1) {
+    const f = fs[0];
+    if (f.round || /^CONE/.test(f.info)) return { type: "diameter", of: await sel(f) };
+    if (f.arc) return { type: "radius", of: await sel(f) };
+    if (f.dir && f.verts && f.verts[0] !== f.verts[1]) {
+      // a straight edge: its length
+      const ax = lineAxis(f);
+      const dim = { type: "linear", from: await selectorOf("vertices", [f.verts[0]]), to: await selectorOf("vertices", [f.verts[1]]) };
+      if (ax === "h") dim.direction = "horizontal"; else if (ax === "v") dim.direction = "vertical"; else if (ax === "a") dim.direction = "aligned";
+      return dim;
+    }
+    return { type: "linear", from: await sel(f), to: "" };
+  }
+  if (fs.length >= 3 && sameRound(fs)) {
+    // a pattern of equal holes / bosses
+    const n = fs.filter(f => f.p.kind === fs[0].p.kind).length;
+    return { type: "diameter", of: await selectorOfAll(fs), text: `${n}X Ø<>` };
+  }
+  if (fs.length === 2) {
+    const [a, b] = fs;
+    const da = a.n || a.dir, db = b.n || b.dir;
+    if (a.dir2 && b.dir2) {
+      // two straight edges: an angle unless they look parallel in this view
+      if (Math.abs(a.dir2[0] * b.dir2[1] - a.dir2[1] * b.dir2[0]) > 0.02) return { type: "angle", from: await sel(a), to: await sel(b) };
+    } else if (da && db) {
+      const c = Math.abs(dot3(unit3(da), unit3(db)));
+      const parallel = !!a.n === !!b.n ? c > 0.9999 : c < 1e-4;      // a line parallel to a plane is square to its normal
+      if (!parallel) return { type: "angle", from: await sel(a), to: await sel(b) };
+    }
+    const dim = { type: "linear", from: await sel(a), to: await sel(b) };
+    // two parallel straight edges: measure across them
+    const ax = lineAxis(a);
+    if (ax && ax === lineAxis(b)) dim.direction = ax === "v" ? "horizontal" : ax === "h" ? "vertical" : "aligned";
+    return dim;
+  }
+  // three or more: ordinates from the first one picked, along the wider spread
+  const xs = fs.map(f => f.centre[0]), ys = fs.map(f => f.centre[1]);
+  const dir = Math.max(...xs) - Math.min(...xs) >= Math.max(...ys) - Math.min(...ys) ? "x" : "y";
+  return { type: "ordinate", origin: await sel(fs[0]), targets: await Promise.all(fs.slice(1).map(sel)), direction: dir };
+}
+/** The most likely feature control frame for the selected features. */
+async function guessGdt(fs, spec) {
+  const attach = await selectorOfAll(fs);
+  const datums = datumLabels(spec).slice(0, 3);
+  const f = fs[0];
+  if (fs.every(f => f.round)) return { attach, characteristic: "position", tolerance: 0.1, diameter: true, modifier: "M", datums: datums.length ? datums : ["A", "B", "C"] };
+  if (/^CONE/.test(f.info)) return { attach, characteristic: "circular_runout", tolerance: 0.05, datums: datums.length ? datums.slice(0, 1) : ["A"] };
+  if (fs.every(f => f.n)) {
+    // a datum plane already: flatness; otherwise relative to datum A
+    if (!datums.length) return { attach, characteristic: "flatness", tolerance: 0.05 };
+    return { attach, characteristic: "parallelism", tolerance: 0.05, datums: datums.slice(0, 1) };
+  }
+  if (fs.every(f => f.dir)) return { attach, characteristic: "straightness", tolerance: 0.05 };
+  return { attach, characteristic: "profile_surface", tolerance: 0.1, datums: datums.length ? datums : ["A"] };
+}
+/** The next free datum letter (I, O and Q are not used). */
+function nextDatum(spec) {
+  const used = new Set(datumLabels(spec));
+  for (const c of "ABCDEFGHJKLMNPRSTUVWXYZ") if (!used.has(c)) return c;
+  return "AA";
+}
+async function guessNote(fs) {
+  const attach = await selectorOfAll(fs);
+  const n = fs.filter(f => f.p.kind === fs[0].p.kind).length;
+  const text = sameRound(fs) && fs[0].size ? (n > 1 ? `${n}X ` : "") + `Ø${fs[0].size} THRU` : "NOTE";
+  return { text, attach };
+}
+let addBusy = false;
+/** Open the editor with a new `key` entry ("dimensions", "gdt", ...) for the picked geometry. */
+async function addAnnotation(key) {
+  if (!picks.size || !specText || addBusy) return;
+  let spec;
+  try { spec = JSON.parse(specText); } catch (e) { setStatus("The drawing JSON could not be read", true); return; }
+  const list = [...picks.values()];
+  const view = list[list.length - 1].view;                 // the view clicked last
+  if (!view || !view.dataset.src) { setStatus("Re-render the drawing to add annotations", true); return; }
+  const fs = list.map(p => featureOf(p, view));
+  addBusy = true; renderSelPanel();
+  setStatus("Finding selectors…");
+  try {
+    const val = key === "dimensions" ? await guessDimension(fs)
+      : key === "gdt" ? await guessGdt(fs, spec)
+      : key === "datums" ? { label: nextDatum(spec), attach: await selectorOfAll(fs) }
+      : await guessNote(fs);
+    setStatus("");
+    const vname = view.id;
+    await openNewAnnEditor(view.dataset.src + "/" + key, key, val, spec, `New entry in view '${vname}'; Apply adds it, Save writes the file`);
+  } catch (e) {
+    setStatus("Could not make the annotation: " + e.message, true);
+  } finally {
+    addBusy = false; renderSelPanel();
+  }
+}
+
+const selectionSelectors = () => Object.values(pickSelectors).filter(s => s && s.sel).map(s => s.sel);
+
+// selection mode: Tab / Shift+Tab cycle through the options
+const MODE_NAMES = { ann: "annotations", view: "views", geom: "geometry" };
+function cycleMode(step) {
+  const m = $("mode"), n = m.options.length;
+  m.selectedIndex = (m.selectedIndex + step + n) % n;
+  modeChanged();
+}
+function modeChanged() {
+  hover(null);
+  pickHover(null);
+  if (svg) svg.classList.toggle("picking", $("mode").value === "geom");
+  if (selected) {
+    const mode = $("mode").value, v = isView(selected);
+    if ((mode === "ann" && v) || mode === "geom" || (mode === "view" && !v)) select(null);
+    else if (v) select(selected, mode === "geom" ? geoPart(selected) : selected);
+  }
+  if ($("mode").value === "geom" && svg && !svg.querySelector(".pick")) setStatus("This drawing has no pickable geometry: rebuild and restart stepdraw serve", true);
+  else setStatus("Selecting " + MODE_NAMES[$("mode").value]);
+}
+$("mode").addEventListener("change", () => { modeChanged(); $("mode").blur(); });
+document.addEventListener("keydown", e => {
+  if (e.key !== "Tab" || e.ctrlKey || e.metaKey || e.altKey || $("annDlg").open) return;
+  if (e.target instanceof Element && e.target.closest("input[type=text], textarea")) return;
+  e.preventDefault();
+  if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
+  cycleMode(e.shiftKey ? -1 : 1);
+}, true);
+
+document.addEventListener("keydown", e => {
+  if (!svg || $("annDlg").open || (e.target instanceof Element && e.target.closest("input, select"))) return;
+  const mod = e.ctrlKey || e.metaKey;
+  if (mod && e.key.toLowerCase() === "z") { e.preventDefault(); e.shiftKey ? redo() : undoAny(); return; }
+  if (mod && e.key.toLowerCase() === "y") { e.preventDefault(); if (deleted.length) restoreDeleted(); else redo(); return; }
+  if (e.key === "Delete" && !mod) { e.preventDefault(); deleteSelected(); return; }
+  if (e.key === "Escape") { select(null); clearPicks(); return; }
+  if (e.key === "f" || e.key === "F") { fit(); return; }
+  if ((e.key === "r" || e.key === "R") && !mod && source) { renderDrawing(source, true); return; }
+  const dirs = { ArrowLeft: V(-1, 0), ArrowRight: V(1, 0), ArrowUp: V(0, -1), ArrowDown: V(0, 1) };
+  if (selected && dirs[e.key]) {
+    e.preventDefault();
+    const s0 = getState(selected);
+    setState(selected, dragged(selected, s0, mul(dirs[e.key], e.shiftKey ? 5 : 0.5), {}));
+    commit([{ g: selected, before: s0, after: getState(selected) }]);
+  }
+});
+
+// ------------------------------------------------------------ rendering through stepdraw
+let source = null;          // what was last rendered: {path} or {file, json, name}
+let specText = null;        // the drawing JSON text of the last render (with unsaved edits)
+let savedText = null;       // the drawing JSON as last read from or written to disk
+const dirty = () => specText !== null && specText !== savedText;
+function updateDirty() {
+  const n = $("name");
+  n.textContent = source && source.path ? source.path : source ? source.name || fileName : fileName;
+  n.classList.toggle("dirty", dirty());
+  n.title = dirty() ? "The drawing JSON has edits that are not saved" : "";
+  $("saveJson").disabled = !specText || !(dirty() || !source || !source.path);
+  $("saveAs").disabled = !specText;
+}
+let busy = false;
+function setStatus(msg, err) { const st = $("status"); st.textContent = msg || ""; st.classList.toggle("err", !!err); }
+function showWarnings(list) {
+  const b = $("warnBtn"), panel = $("warnings");
+  panel.hidden = true;
+  if (!list.length) { b.hidden = true; return; }
+  b.hidden = false;
+  b.textContent = list.length === 1 ? "1 warning" : `${list.length} warnings`;
+  clear(panel);
+  const h = document.createElement("strong"); h.textContent = "stepdraw warnings";
+  const ul = document.createElement("ul");
+  for (const w of list) { const li = document.createElement("li"); li.textContent = w; ul.appendChild(li); }
+  panel.append(h, ul);
+}
+$("warnBtn").onclick = () => { $("warnings").hidden = !$("warnings").hidden; };
+
+async function renderDrawing(src, keepMoves) {
+  if (busy) return;
+  busy = true;
+  setStatus("Rendering…");
+  try {
+    let body;
+    if (src.path) body = src.json ? { path: src.path, json: src.json } : { path: src.path };
+    else {
+      // re-read the chosen file so edits to it are picked up
+      if (src.file) try { src.json = await src.file.text(); } catch (e) { /* keep the copy read earlier */ }
+      body = { json: src.json, name: src.name };
+    }
+    const res = await fetch("/api/render", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const out = await res.json();
+    if (out.error) { setStatus(out.error, true); return; }
+    const keep = keepMoves && svg ? {
+      anns: [...svg.querySelectorAll("g.ann")].map(g => ({ kind: g.dataset.kind, src: g.dataset.src, s: getState(g) })),
+      remap: takeRemap(),
+      views: Object.fromEntries([...svg.querySelectorAll(":scope > g.view")].map(g => [g.id, getState(g)])),
+    } : null;
+    const hadMoves = keep && keep.anns.some(k => Object.values(k.s).some(v => v));
+    const view = keepMoves && vb ? vb.slice() : null;
+    const kept = load(out.svg, out.name, keep);
+    specText = out.spec || null;
+    selCache.clear();
+    // text read from a file is the saved state; unsaved edits (src.json) keep the old one
+    if ((src.path && !src.json) || src.file) savedText = specText;
+    if (view) setVB(view);
+    source = src;
+    updateDirty();
+    $("rerender").disabled = false;
+    showWarnings(out.warnings || []);
+    setStatus(hadMoves && !kept ? "Re-rendered; the annotations changed, so their moves were reset (view moves kept)" : "");
+  } catch (e) {
+    setStatus("Could not reach stepdraw. Is `stepdraw serve` still running?", true);
+  } finally {
+    busy = false;
+  }
+}
+
+// ------------------------------------------------------------ annotation JSON editor
+/** Text range [start, end) of the value at JSON pointer `ptr` in `text`, or null. */
+function locate(text, ptr) {
+  const path = ptr.split("/").slice(1).map(k => k.replace(/~1/g, "/").replace(/~0/g, "~"));
+  let i = 0;
+  const ws = () => { while (i < text.length && /\s/.test(text[i])) i++; };
+  const str = () => { i++; while (i < text.length && text[i] !== '"') { if (text[i] === "\\") i++; i++; } i++; };
+  function skip() {
+    ws();
+    const c = text[i];
+    if (c === "{" || c === "[") {
+      const close = c === "{" ? "}" : "]";
+      i++; ws();
+      if (text[i] === close) { i++; return; }
+      for (;;) {
+        ws();
+        if (c === "{") { str(); ws(); i++; }
+        skip(); ws();
+        if (text[i] === ",") { i++; continue; }
+        i++; return;
+      }
+    } else if (c === '"') str();
+    else while (i < text.length && !/[,\]\}\s]/.test(text[i])) i++;
+  }
+  function find(d) {
+    ws();
+    if (d === path.length) { const s0 = i; skip(); return [s0, i]; }
+    const key = path[d];
+    if (text[i] === "{") {
+      i++;
+      for (;;) {
+        ws();
+        if (text[i] === "}" || i >= text.length) return null;
+        const ks = i; str();
+        const k = JSON.parse(text.slice(ks, i));
+        ws(); i++;
+        if (k === key) return find(d + 1);
+        skip(); ws();
+        if (text[i] === ",") i++;
+      }
+    }
+    if (text[i] === "[") {
+      i++;
+      for (let n = 0; ; n++) {
+        ws();
+        if (text[i] === "]" || i >= text.length) return null;
+        if (n === +key) return find(d + 1);
+        skip(); ws();
+        if (text[i] === ",") i++;
+      }
+    }
+    return null;
+  }
+  try { return find(0); } catch (e) { return null; }
+}
+function getPtr(obj, ptr) {
+  for (const k of ptr.split("/").slice(1)) { if (obj == null) return undefined; obj = obj[k.replace(/~1/g, "/").replace(/~0/g, "~")]; }
+  return obj;
+}
+function setPtr(obj, ptr, val) {
+  const ks = ptr.split("/").slice(1).map(k => k.replace(/~1/g, "/").replace(/~0/g, "~"));
+  let o = obj;
+  for (const k of ks.slice(0, -1)) o = o[k];
+  o[ks[ks.length - 1]] = val;
+}
+/** The drawing JSON with the value at `ptr` replaced, keeping the rest of the text as it was. */
+function spliceSpec(text, ptr, val) {
+  const r = locate(text, ptr);
+  if (r) {
+    const lineStart = text.lastIndexOf("\n", r[0] - 1) + 1;
+    const indent = /^[ \t]*/.exec(text.slice(lineStart))[0];
+    const body = JSON.stringify(val, null, 2).split("\n").join("\n" + indent);
+    const out = text.slice(0, r[0]) + body + text.slice(r[1]);
+    try { if (JSON.stringify(getPtr(JSON.parse(out), ptr)) === JSON.stringify(val)) return out; } catch (e) { /* fall through */ }
+  }
+  const spec = JSON.parse(text);
+  setPtr(spec, ptr, val);
+  return JSON.stringify(spec, null, 2) + "\n";
+}
+
+/** The drawing JSON with `val` appended to the array at `arrPtr` (created if missing),
+ *  keeping the rest of the text as it was. */
+function appendSpec(text, arrPtr, val) {
+  const parts = arrPtr.split("/"), key = parts.pop(), parentPtr = parts.join("/");
+  const ok = out => {
+    try { const a = getPtr(JSON.parse(out), arrPtr); return Array.isArray(a) && JSON.stringify(a[a.length - 1]) === JSON.stringify(val); } catch (e) { return false; }
+  };
+  const indentAt = i => /^[ \t]*/.exec(text.slice(text.lastIndexOf("\n", i - 1) + 1))[0];
+  const block = (v, ind) => JSON.stringify(v, null, 2).split("\n").join("\n" + ind);
+  let out = null;
+  const r = locate(text, arrPtr);
+  if (r && text[r[0]] === "[") {
+    let j = r[1] - 2;                                     // the last thing before "]"
+    while (j > r[0] && /\s/.test(text[j])) j--;
+    const ind = indentAt(r[0]) + "  ";
+    if (j === r[0]) out = text.slice(0, r[0]) + "[\n" + ind + block(val, ind) + "\n" + indentAt(r[0]) + "]" + text.slice(r[1]);
+    else if (text.slice(r[0], r[1]).includes("\n")) out = text.slice(0, j + 1) + ",\n" + ind + block(val, ind) + text.slice(j + 1);
+    else out = text.slice(0, j + 1) + ", " + JSON.stringify(val) + text.slice(j + 1);
+  } else if (!r) {
+    const pr = locate(text, parentPtr);
+    if (pr && text[pr[0]] === "{") {
+      let j = pr[1] - 2;
+      while (j > pr[0] && /\s/.test(text[j])) j--;
+      const ind = indentAt(pr[0]) + "  ";
+      out = text.slice(0, j + 1) + (j > pr[0] ? "," : "") + "\n" + ind + JSON.stringify(key) + ": [\n" + ind + "  " + block(val, ind + "  ") + "\n" + ind + "]" + text.slice(j + 1);
+    }
+  }
+  if (out && ok(out)) return out;
+  const spec = JSON.parse(text);
+  const parent = getPtr(spec, parentPtr);
+  if (!parent || typeof parent !== "object") throw new Error("no " + parentPtr + " in the drawing JSON");
+  (parent[key] = Array.isArray(parent[key]) ? parent[key] : []).push(val);
+  return JSON.stringify(spec, null, 2) + "\n";
+}
+
+const KIND_TITLES = { dimensions: "Dimension", gdt: "GD&T frame", datums: "Datum", datum_targets: "Datum target", notes: "Note",
+  views: "View", projected: "Projected view", sections: "Section view", details: "Detail view", title: "Title block" };
+const SELECTOR_KEYS = new Set(["from", "to", "of", "origin", "attach", "through", "center"]);
+/** Selectors used anywhere in the drawing, offered as completions. */
+function drawingSelectors(spec) {
+  const out = new Set();
+  (function walk(o, key) {
+    if (Array.isArray(o)) o.forEach(v => walk(v, key === "targets" ? "targets" : null));
+    else if (o && typeof o === "object") for (const k in o) walk(o[k], k);
+    else if (typeof o === "string" && (SELECTOR_KEYS.has(key) || key === "targets")) out.add(o);
+  })(spec, null);
+  return [...out].sort();
+}
+function schemaFor(kind, spec) {
+  const common = ['faces(">X")', 'faces("<X")', 'faces(">Y")', 'faces("<Y")', 'faces(">Z")', 'faces("<Z")',
+    'faces("%CYLINDER")', 'faces("%CYLINDER").faces("<X")', 'faces("%PLANE").faces("+Z")', 'faces(">Z[1]")',
+    'edges("|Z")', 'edges("%CIRCLE")', 'vertices("<X and <Y")'];
+  const examples = [...new Set([...selectionSelectors(), ...drawingSelectors(spec), ...common])];
+  const sel = d => ({ type: "string", description: d + "\n\nCadQuery selector: faces / edges / vertices chained, e.g. faces(\"%CYLINDER\").faces(\"<X[1]\"). " +
+    ">X <Y >(1,1,0) max/min centre, >Z[1] n-th group, |Z parallel, #Z perpendicular, +Z / -Z normal, %PLANE %CYLINDER %CONE %SPHERE %TORUS %LINE %CIRCLE, and / or / not.", examples });
+  const datumRef = { type: "string", description: "Datum reference, with modifiers in brackets: \"A\", \"B(M)\", \"A-B(L)\".",
+    examples: ["A", "B", "C", "A(M)", "B(M)", "A-B", "A(L)"] };
+  const modifier = { type: "string", description: "M (MMC), L (LMC), F (free state), P12 (projected zone 12), T (tangent plane), U0.2 (unequal profile), S (RFS), E (envelope), ST (statistical), CZ (common zone).",
+    examples: ["M", "L", "F", "P", "T", "U", "S", "E", "ST", "CZ"] };
+  const characteristics = ["straightness", "flatness", "circularity", "cylindricity", "profile_line", "profile_surface", "angularity",
+    "perpendicularity", "parallelism", "position", "concentricity", "symmetry", "circular_runout", "total_runout"];
+  const frame = (needAttach) => ({
+    type: "object", additionalProperties: false, required: ["characteristic", "tolerance"],
+    properties: Object.assign(needAttach ? {
+      attach: sel("Feature the frame's leader points to."),
+      dimension: { type: "string", description: "Attach the frame to the dimension with this \"id\" instead of to geometry." },
+    } : {}, {
+      characteristic: { enum: characteristics, description: "Geometric characteristic symbol." },
+      tolerance: { type: ["number", "string"], description: "Tolerance value (number) or text." },
+      diameter: { type: "boolean", description: "Prefix the tolerance with Ø (cylindrical zone)." },
+      datum: { type: "string", description: "Datum feature symbol attached to the frame (hangs below it, or off the far side on a dimension).", examples: ["A", "B", "C"] },
+      id: { type: "string", description: "Name datum symbols can refer to with \"gdt\": \"<id>\"." },
+      all_around: { type: "boolean", description: "All around: a circle on the leader's bend; the tolerance applies all around the profile in this view. Frames on a leader only (not on a dimension)." },
+      modifier: { anyOf: [modifier, { type: "array", items: modifier }], description: "Modifiers after the tolerance: a string (\"M\", or space-separated) or a list." },
+      datums: { type: "array", items: datumRef, description: "Datum references, primary first." },
+    }),
+    defaultSnippets: [
+      { label: "position Ø at MMC", body: { characteristic: "position", tolerance: "^${1:0.2}", diameter: true, modifier: "M", datums: ["A", "B", "C"] } },
+      { label: "flatness", body: { characteristic: "flatness", tolerance: "^${1:0.05}" } },
+      { label: "perpendicularity", body: { characteristic: "perpendicularity", tolerance: "^${1:0.05}", datums: ["A"] } },
+    ],
+  });
+  const tol = {
+    description: "Tolerance: 0.1 (±), \"basic\", \"reference\", a named fit such as \"H7\" or \"g6\" (drawn with its deviations for this size, from named_fits.json), other text, or an object with a \"type\".",
+    anyOf: [
+      { type: "number" },
+      { type: "string", examples: ["basic", "reference", "H7", "H8", "H11", "G7", "F7", "K7", "N7", "P7", "h6", "h7", "h9", "g6", "f7", "k6", "m6", "n6", "p6", "s6", "js6"] },
+      { type: "object", additionalProperties: false, properties: {
+        type: { enum: ["symmetric", "asymmetric", "limits", "basic", "reference"], description: "symmetric: ±value. asymmetric: +plus / minus stacked. limits: upper over lower. basic: boxed. reference: in brackets." },
+        value: { type: "number", description: "symmetric: the ± value" },
+        plus: { type: "number", description: "Signed upper deviation from the nominal." },
+        minus: { type: "number", description: "Signed lower deviation from the nominal (e.g. -0.05)." },
+        upper: { type: "number", description: "limits: the upper limit itself" },
+        lower: { type: "number", description: "limits: the lower limit itself" },
+      } },
+    ],
+    defaultSnippets: [
+      { label: "± symmetric", body: { type: "symmetric", value: "^${1:0.1}" } },
+      { label: "asymmetric +/-", body: { type: "asymmetric", plus: "^${1:0.1}", minus: "^${2:-0.05}" } },
+      { label: "limits", body: { type: "limits", plus: "^${1:0.1}", minus: "^${2:0}" } },
+      { label: "basic", body: "basic" },
+    ],
+  };
+  const schemas = {
+    dimensions: {
+      type: "object", additionalProperties: false, required: ["type"],
+      properties: {
+        type: { enum: ["linear", "diameter", "radius", "angle", "ordinate"], description: "Kind of dimension." },
+        from: sel("linear / angle: first feature."), to: sel("linear / angle: second feature."),
+        of: sel("diameter / radius: circle edge or cylindrical face."),
+        origin: sel("ordinate: the zero point."),
+        targets: { type: "array", items: sel("ordinate: a feature to dimension."), description: "ordinate: features to dimension." },
+        direction: { enum: ["horizontal", "vertical", "aligned", "x", "y"], description: "linear: horizontal / vertical / aligned (default: the dominant axis). ordinate: x / y." },
+        side: { enum: ["above", "below", "left", "right"], description: "Side of the view for the dimension." },
+        text: { type: "string", description: "Text; <> is replaced by the measured value, e.g. \"2X Ø<> THRU\".", examples: ["<>", "2X Ø<> THRU", "Ø<> x 5 DEEP", "R<> TYP"] },
+        prefix: { type: "string", description: "Text before the value (default Ø / R for diameters / radii)." },
+        suffix: { type: "string", description: "Text after the value." },
+        decimals: { type: "integer", minimum: 0, maximum: 6, description: "Decimal places (default from config.json)." },
+        tolerance: tol,
+        id: { type: "string", description: "Name that GD&T frames and datums can refer to with \"dimension\"." },
+        gdt: { type: "array", items: frame(false), description: "Feature control frames attached to this dimension." },
+        datum: { type: "string", description: "Datum feature symbol attached to this dimension (feature of size).", examples: ["A", "B", "C", "D", "E"] },
+      },
+      allOf: [
+        { if: { properties: { type: { const: "linear" } } }, then: { required: ["from", "to"] } },
+        { if: { properties: { type: { const: "angle" } } }, then: { required: ["from", "to"] } },
+        { if: { properties: { type: { enum: ["diameter", "radius"] } } }, then: { required: ["of"] } },
+        { if: { properties: { type: { const: "ordinate" } } }, then: { required: ["origin", "targets"] } },
+      ],
+    },
+    gdt: Object.assign(frame(true), { anyOf: [{ required: ["attach"] }, { required: ["dimension"] }] }),
+    datums: {
+      type: "object", additionalProperties: false, required: ["label"],
+      properties: {
+        label: { type: "string", description: "Datum letter.", examples: ["A", "B", "C"] },
+        attach: sel("Datum feature."),
+        dimension: { type: "string", description: "Attach to the dimension with this \"id\" instead (feature of size)." },
+        gdt: { type: "string", description: "Attach to the GD&T frame with this \"id\" instead." },
+      },
+      anyOf: [{ required: ["attach"] }, { required: ["dimension"] }, { required: ["gdt"] }],
+    },
+    datum_targets: {
+      type: "object", additionalProperties: false, required: ["label", "attach"],
+      properties: {
+        label: { type: "string", description: "e.g. \"A1\"" },
+        attach: sel("Surface / edge / vertex the target lies on."),
+        kind: { enum: ["point", "line", "area"], description: "point: X. line: X and a phantom line. area: hatched circle." },
+        size: { type: "string", description: "Target size shown in the upper half, e.g. \"Ø6\" (also the drawn size)." },
+        point: { type: "array", items: { type: "number" }, minItems: 3, maxItems: 3, description: "Exact location in model coordinates [x, y, z]." },
+      },
+    },
+    notes: {
+      type: "object", additionalProperties: false, required: ["text"],
+      properties: {
+        text: { type: "string", description: "Note text (\\n for a new line)." },
+        attach: sel("Feature the note's leader points to (omit for a free note)."),
+        boxed: { type: "boolean", description: "Draw a box round the note (default true)." },
+      },
+    },
+  };
+  // views: their own settings plus the annotation lists
+  const list = (k, d) => ({ type: "array", items: schemas[k], description: d });
+  const ann = {
+    dimensions: list("dimensions", "Dimensions in this view."), gdt: list("gdt", "Feature control frames."),
+    datums: list("datums", "Datum feature symbols."), datum_targets: list("datum_targets", "Datum targets."), notes: list("notes", "Notes."),
+  };
+  const vec3 = d => ({ type: "array", items: { type: "number" }, minItems: 3, maxItems: 3, description: d });
+  const hidden = { type: "boolean", description: "Draw hidden lines (default from config.json)." };
+  schemas.details = {
+    type: "object", additionalProperties: false, required: ["label", "radius"],
+    properties: Object.assign({
+      label: { type: "string", description: "Detail letter: \"D\" gives DETAIL D (2:1)." },
+      name: { type: "string", description: "View name (default detail_<label>)." },
+      center: sel("Centre of the detail (its reference point)."),
+      point: vec3("Centre of the detail as a model point [x, y, z]."),
+      radius: { type: "number", exclusiveMinimum: 0, description: "Radius of the detail circle in model mm." },
+      scale: { type: "number", exclusiveMinimum: 0, description: "Scale of the detail view (default twice the parent's)." },
+      location: { type: "array", items: { type: "number" }, description: "Sheet position [x, y] of the detail centre, mm from bottom-left (default: nearest free space)." },
+      hidden_lines: hidden,
+      border: { type: "boolean", description: "Draw the detail circle as the view's boundary (default true)." },
+    }, ann),
+  };
+  schemas.sections = {
+    type: "object", additionalProperties: false, required: ["label", "position"],
+    properties: Object.assign({
+      label: { type: "string", description: "Section letter: \"A\" gives SECTION A-A." },
+      name: { type: "string", description: "View name (default section_<label>)." },
+      position: { enum: ["right", "left", "top", "bottom", "rear"], description: "Side of the parent the section is looked at from; the cutting plane is square to it." },
+      through: sel("The cutting plane passes through this feature."),
+      point: vec3("The cutting plane passes through this model point [x, y, z]."),
+      hidden_lines: { type: "boolean", description: "Hidden lines behind the cut (default false)." },
+      hatch_angle: { type: "number", description: "Hatch angle in degrees." },
+      hatch_spacing: { type: "number", description: "Hatch spacing in mm." },
+      details: { type: "array", items: schemas.details, description: "Detail views of this section." },
+    }, ann),
+  };
+  schemas.projected = {
+    type: "object", additionalProperties: false, required: ["position"],
+    properties: Object.assign({
+      name: { type: "string", description: "View name (default <parent>_<position>)." },
+      position: { enum: ["top", "bottom", "left", "right", "rear"], description: "Side of the parent view it is looked at from." },
+      hidden_lines: hidden,
+      projected: { type: "array", items: { $ref: "#/definitions/projected" }, description: "Views projected from this one (the arrow buttons add them)." },
+      sections: { type: "array", items: schemas.sections, description: "Section views of this view." },
+      details: { type: "array", items: schemas.details, description: "Detail views of this view." },
+    }, ann),
+  };
+  schemas.views = {
+    type: "object", additionalProperties: false, required: ["name", "direction"],
+    properties: Object.assign({
+      name: { type: "string", description: "View name." },
+      direction: vec3("View direction: from the part towards the viewer, e.g. [0, 0, 1] looks down Z."),
+      up: vec3("Model direction that points up on the sheet."),
+      location: { type: "array", items: { type: "number" }, description: "Sheet position [x, y] of the view centre, mm from bottom-left." },
+      scale: { type: "number", exclusiveMinimum: 0, description: "View scale (default 1)." },
+      hidden_lines: hidden,
+      projected: { type: "array", items: { $ref: "#/definitions/projected" }, description: "Projected views aligned with this one (the arrow buttons add them)." },
+      sections: { type: "array", items: schemas.sections, description: "Section views." },
+      details: { type: "array", items: schemas.details, description: "Detail views." },
+    }, ann),
+  };
+  schemas.title = {
+    type: "object", additionalProperties: false,
+    properties: {
+      drawing_number: { type: "string", description: "Drawing number (large text)." },
+      revision: { type: "string", description: "Revision." },
+      description: { type: "string", description: "Part description." },
+      material: { type: "string", description: "Material." },
+      finish: { type: "string", description: "Finish." },
+      drawn_by: { type: "string", description: "Drawn by." },
+      date: { type: "string", description: "Date, e.g. 2026-11-13." },
+      notes: { type: "string", description: "General notes, wrapped in the notes box (\\n for a new line)." },
+    },
+  };
+  // projected views nest: they refer to themselves through a definition
+  if (kind === "views" || kind === "projected") return Object.assign({}, schemas[kind], { definitions: { projected: schemas.projected } });
+  return schemas[kind];
+}
+
+// Monaco (the VS Code editor) gives completion, hover help and validation
+// from the schema. It loads from a CDN on first use; offline, a plain text
+// box is used instead.
+const MONACO = "https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min";
+let monacoReady = null, monacoEditor = null, fallbackBox = null;
+function loadMonaco() {
+  if (monacoReady) return monacoReady;
+  monacoReady = new Promise((resolve, reject) => {
+    window.MonacoEnvironment = {
+      getWorkerUrl: () => "data:text/javascript;charset=utf-8," + encodeURIComponent(
+        `self.MonacoEnvironment={baseUrl:"${MONACO}/"};importScripts("${MONACO}/vs/base/worker/workerMain.js");`),
+    };
+    const s = document.createElement("script");
+    s.src = MONACO + "/vs/loader.js";
+    s.onload = () => {
+      window.require.config({ paths: { vs: MONACO + "/vs" } });
+      window.require(["vs/editor/editor.main"], () => resolve(window.monaco), reject);
+    };
+    s.onerror = reject;
+    document.head.appendChild(s);
+    setTimeout(() => reject(new Error("timeout")), 15000);
+  });
+  return monacoReady;
+}
+const dark = () => matchMedia("(prefers-color-scheme: dark)").matches;
+let editing = null;   // {ptr, kind, g} or, for a new entry, {ptr, kind, arr}
+function annMsg(m, err) { const e = $("annMsg"); e.textContent = m || ""; e.classList.toggle("err", !!err); }
+
+async function openAnnEditor(g) {
+  const ptr = g.dataset.src;
+  if (!ptr || !specText) return;
+  let spec;
+  try { spec = JSON.parse(specText); } catch (e) { setStatus("The drawing JSON could not be read", true); return; }
+  const val = getPtr(spec, ptr);
+  if (val === undefined) { setStatus("This annotation is not in the drawing JSON any more; re-render first", true); return; }
+  const kind = ptr.split("/").slice(-2, -1)[0];
+  editing = { ptr, kind, g };
+  $("annTitle").textContent = "Edit " + (KIND_TITLES[kind] || "annotation").toLowerCase();
+  await openEditorWith(ptr, kind, val, spec);
+}
+/** The drawing JSON text with the value being edited put in. */
+function specWith(val) {
+  if (editing.kind === "title") return titleSpecWith(val);
+  return editing.arr ? appendSpec(specText, editing.arr, val) : spliceSpec(specText, editing.ptr, val);
+}
+/** The drawing JSON with `val` at `ptr`, adding the key to its object if it isn't there yet. */
+function putSpec(text, ptr, val) {
+  if (locate(text, ptr)) return spliceSpec(text, ptr, val);
+  const parts = ptr.split("/"), key = parts.pop().replace(/~1/g, "/").replace(/~0/g, "~"), parentPtr = parts.join("/");
+  const pr = locate(text, parentPtr);
+  if (pr && text[pr[0]] === "{") {
+    let j = pr[1] - 2;
+    while (j > pr[0] && /\s/.test(text[j])) j--;
+    const ind = lineIndent(text, pr[0]) + "  ";
+    const out = text.slice(0, j + 1) + (j > pr[0] ? "," : "") + "\n" + ind + JSON.stringify(key) + ": " + JSON.stringify(val, null, 2).split("\n").join("\n" + ind) + text.slice(j + 1);
+    try { if (JSON.stringify(getPtr(JSON.parse(out), ptr)) === JSON.stringify(val)) return out; } catch (e) { /* fall through */ }
+  }
+  const spec = JSON.parse(text);
+  setPtr(spec, ptr, val);
+  return JSON.stringify(spec, null, 2) + "\n";
+}
+// ------------------------------------------------------------ title block, scale and sheet
+const inTitleBlock = e => {
+  const tb = svg && svg.querySelector("#title_block");
+  if (!tb) return false;
+  const b = tb.getBoundingClientRect();
+  return e.clientX >= b.left && e.clientX <= b.right && e.clientY >= b.top && e.clientY <= b.bottom;
+};
+async function openTitleEditor() {
+  if (!specText || $("annDlg").open) return;
+  let spec;
+  try { spec = JSON.parse(specText); } catch (e) { setStatus("The drawing JSON could not be read", true); return; }
+  const key = "title" in spec || !("title_block" in spec) ? "title" : "title_block";
+  const sheet = Object.assign({ size: "A3", orientation: "landscape" }, spec.sheet || {});
+  const scale = spec.views && spec.views[0] ? (spec.views[0].scale ?? 1) : 1;
+  editing = { ptr: "/" + key, kind: "title", scale0: scale, sheet0: { size: String(sheet.size).toUpperCase(), orientation: String(sheet.orientation).toLowerCase() } };
+  $("annTitle").textContent = "Edit title block";
+  $("annScaleView").textContent = spec.views && spec.views[0] ? `'${spec.views[0].name}'` : "";
+  $("annScale").value = scale;
+  $("annSize").value = editing.sheet0.size;
+  $("annOrient").value = editing.sheet0.orientation;
+  await openEditorWith("/" + key, "title", spec[key] || {}, spec, "Apply re-renders with the edit; Save writes it to the file");
+}
+/** The drawing JSON with the edited title block, and the scale and sheet if they were changed. */
+function titleSpecWith(val) {
+  let text = putSpec(specText, editing.ptr, val);
+  const sc = parseFloat($("annScale").value);
+  if (!(sc > 0)) throw new Error("the scale must be a number above 0");
+  if (sc !== editing.scale0) text = putSpec(text, "/views/0/scale", sc);
+  const sheet = { size: $("annSize").value, orientation: $("annOrient").value };
+  if (sheet.size !== editing.sheet0.size || sheet.orientation !== editing.sheet0.orientation) text = putSpec(text, "/sheet", sheet);
+  return text;
+}
+for (const id of ["annScale", "annSize", "annOrient"]) $(id).addEventListener("input", () => schedulePreview());
+// ------------------------------------------------------------ adding projected views from the view editor
+let arrowProjection = null;
+/** The `position` of a projected view placed in sheet direction `dir`. */
+function positionFor(dir) {
+  const first = /^(first|1st|first_angle)$/i.test(arrowProjection || "");
+  const third = { up: "top", down: "bottom", left: "left", right: "right" };
+  const opp = { up: "bottom", down: "top", left: "right", right: "left" };
+  return first ? opp[dir] : third[dir];
+}
+/** Disable the arrows whose view the edited view already has. */
+function refreshArrows() {
+  if ($("annArrows").hidden) return;
+  let have = [];
+  try { have = (JSON.parse(editorText()).projected || []).map(p => p && p.position); } catch (e) { /* half typed */ }
+  for (const b of $("annArrows").querySelectorAll("button")) {
+    const pos = positionFor(b.dataset.dir);
+    b.disabled = have.includes(pos);
+    b.title = b.disabled ? `This view already has a ${pos} view` : `Add the view from the ${pos} (placed ${b.dataset.dir === "up" ? "above" : b.dataset.dir === "down" ? "below" : "to the " + b.dataset.dir})`;
+  }
+}
+function setEditorText(text) {
+  if (monacoEditor && !fallbackBox) {
+    const m = monacoEditor.getModel();
+    monacoEditor.executeEdits("arrows", [{ range: m.getFullModelRange(), text }]);
+    monacoEditor.pushUndoStop();
+    monacoEditor.focus();
+  } else if (fallbackBox) { fallbackBox.value = text; schedulePreview(); }
+}
+for (const b of document.querySelectorAll("#annArrows button")) b.onclick = () => {
+  if (!editing) return;
+  let text = autoFixCommas(true);
+  try { JSON.parse(text); } catch (e) { annMsg("Fix the JSON first: " + e.message, true); return; }
+  const position = positionFor(b.dataset.dir);
+  setEditorText(appendSpec(text, "/projected", { position }));
+  annMsg(`Added the ${position} view; Apply to keep it`);
+  refreshArrows();
+};
+
+/** Open the editor on a new entry `val` for the array at `arr` (e.g. "/views/0/dimensions"). */
+async function openNewAnnEditor(arr, kind, val, spec, note) {
+  const list = getPtr(spec, arr);
+  const ptr = arr + "/" + (Array.isArray(list) ? list.length : 0);
+  editing = { ptr, kind, arr };
+  $("annTitle").textContent = "New " + (KIND_TITLES[kind] || "annotation").toLowerCase();
+  await openEditorWith(ptr, kind, val, spec, note);
+}
+async function openEditorWith(ptr, kind, val, spec, note) {
+  $("annPath").textContent = ptr;
+  $("annArrows").hidden = kind !== "views" && kind !== "projected";   // views that can have projected views
+  $("annSheet").hidden = kind !== "title";
+  arrowProjection = spec.projection;
+  annMsg(note || "Apply re-renders with the edit; Save writes it to the file");
+  const isNew = !!editing.arr;
+  refreshInsert();
+  previewMsg("");
+  const text = JSON.stringify(val, null, 2);
+  $("annDlg").showModal();
+  // start from the drawing as it is now (after opening, so it can be measured)
+  if (svg) showPreview(new XMLSerializer().serializeToString(svg), ptr);
+  try {
+    const monaco = await loadMonaco();
+    if (!editing) return;
+    const uri = monaco.Uri.parse(`inmemory://stepdraw/${kind}.json`);
+    monaco.languages.json.jsonDefaults.setDiagnosticsOptions({
+      validate: true, allowComments: false, enableSchemaRequest: false,
+      schemas: [{ uri: "inmemory://stepdraw/schema/" + kind, fileMatch: [uri.toString()], schema: schemaFor(kind, spec) }],
+    });
+    let model = monaco.editor.getModel(uri);
+    if (model) model.setValue(text); else model = monaco.editor.createModel(text, "json", uri);
+    if (!monacoEditor) {
+      clear($("annEditor"));
+      monacoEditor = monaco.editor.create($("annEditor"), {
+        model, theme: dark() ? "vs-dark" : "vs", automaticLayout: true, minimap: { enabled: false },
+        fontSize: 13, tabSize: 2, scrollBeyondLastLine: false, quickSuggestions: { strings: true, other: true },
+        suggestOnTriggerCharacters: true, fixedOverflowWidgets: true,
+      });
+      monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, applyAnnEdit);
+      monacoEditor.onDidChangeModelContent(() => schedulePreview());
+    } else monacoEditor.setModel(model);
+    monacoEditor.focus();
+    if (isNew) schedulePreview();         // the new entry isn't on the drawing yet
+    refreshArrows();
+  } catch (e) {
+    // offline: plain text box
+    if (!fallbackBox) {
+      clear($("annEditor"));
+      fallbackBox = document.createElement("textarea");
+      fallbackBox.className = "fallback"; fallbackBox.spellcheck = false;
+      fallbackBox.addEventListener("keydown", ev => { if ((ev.ctrlKey || ev.metaKey) && ev.key === "Enter") applyAnnEdit(); });
+      fallbackBox.addEventListener("input", schedulePreview);
+      $("annEditor").appendChild(fallbackBox);
+    }
+    fallbackBox.value = text;
+    fallbackBox.focus();
+    if (isNew) schedulePreview();
+    refreshArrows();
+    annMsg("The code editor could not be loaded (offline?), so there is no completion here.", false);
+  }
+}
+// ------------------------------------------------------------ deleting entries
+const deleted = [];          // [{arr, i, val, what}] newest last, for Ctrl+Z / Ctrl+Y
+/** Ctrl+Z: moves made since the last re-render first, then deletions (a deletion re-renders, so it is older). */
+function undoAny() { if (undoStack.length) undo(); else if (deleted.length) restoreDeleted(); }
+let pendingRemap = null;     // how JSON paths change in the next render
+function takeRemap() { const r = pendingRemap; pendingRemap = null; return r; }
+/** `s` after inserting (delta +1) or removing (-1) entry `i` of the array at `arr`; null if removed. */
+function shiftPtr(s, arr, i, delta) {
+  const pre = arr + "/";
+  if (!s || !s.startsWith(pre)) return s;
+  const rest = s.slice(pre.length), k = rest.indexOf("/");
+  const j = +(k < 0 ? rest : rest.slice(0, k)), tail = k < 0 ? "" : rest.slice(k);
+  if (delta < 0 && j === i) return null;
+  return j >= i + (delta < 0 ? 1 : 0) ? pre + (j + delta) + tail : s;
+}
+const lineIndent = (text, i) => /^[ \t]*/.exec(text.slice(text.lastIndexOf("\n", i - 1) + 1))[0];
+/** The drawing JSON without the array entry at `ptr`, keeping the rest of the text. */
+function removeSpec(text, ptr) {
+  const parts = ptr.split("/"), i = +parts.pop(), arr = parts.join("/");
+  const spec = JSON.parse(text);
+  const list = getPtr(spec, arr);
+  if (!Array.isArray(list) || i >= list.length) throw new Error(ptr + " is not in the drawing JSON");
+  list.splice(i, 1);
+  const want = JSON.stringify(spec);
+  const r = locate(text, ptr);
+  if (r) {
+    let a = r[0], b = r[1];
+    let p = a - 1; while (p >= 0 && /\s/.test(text[p])) p--;
+    let q = b; while (q < text.length && /\s/.test(text[q])) q++;
+    if (text[p] === ",") a = p;                                   // an entry before it: take its comma
+    else if (text[q] === ",") { b = q + 1; while (b < text.length && /\s/.test(text[b])) b++; }   // the first: the comma after
+    else if (text[p] === "[" && text[q] === "]") { a = p + 1; b = q; }                          // the only one: []
+    const out = text.slice(0, a) + text.slice(b);
+    try { if (JSON.stringify(JSON.parse(out)) === want) return out; } catch (e) { /* fall through */ }
+  }
+  return JSON.stringify(spec, null, 2) + "\n";
+}
+/** The drawing JSON with `val` put back as entry `i` of the array at `arr`. */
+function insertSpec(text, arr, i, val) {
+  const spec = JSON.parse(text);
+  const list = getPtr(spec, arr);
+  if (!Array.isArray(list) || i >= list.length) return appendSpec(text, arr, val);
+  list.splice(i, 0, val);
+  const want = JSON.stringify(spec);
+  const r = locate(text, arr + "/" + i);
+  if (r) {
+    const multi = text.slice(Math.max(0, r[0] - 200), r[0]).includes("\n") && /\n[ \t]*$/.test(text.slice(0, r[0]));
+    const ind = lineIndent(text, r[0]);
+    const body = multi ? JSON.stringify(val, null, 2).split("\n").join("\n" + ind) + ",\n" + ind : JSON.stringify(val) + ", ";
+    const out = text.slice(0, r[0]) + body + text.slice(r[0]);
+    try { if (JSON.stringify(JSON.parse(out)) === want) return out; } catch (e) { /* fall through */ }
+  }
+  return JSON.stringify(spec, null, 2) + "\n";
+}
+/** A short name for the entry at `ptr`, e.g. "dimension 4" or "view 'plan'". */
+function entryName(ptr, val) {
+  const parts = ptr.split("/"), kind = parts[parts.length - 2];
+  const t = (KIND_TITLES[kind] || "item").toLowerCase();
+  const name = val && (val.name || val.label || (kind === "views" || kind === "projected" ? val.position : null) || val.text);
+  return name ? `${t} '${String(name).slice(0, 30)}'` : `${t} ${+parts[parts.length - 1] + 1}`;
+}
+async function deleteSelected() {
+  if (!selected || busy || !specText) return;
+  const ptr = selected.dataset.src;
+  if (!ptr) { setStatus("Re-render the drawing before deleting", true); return; }
+  let spec;
+  try { spec = JSON.parse(specText); } catch (e) { setStatus("The drawing JSON could not be read", true); return; }
+  if (/^\/views\/\d+$/.test(ptr) && spec.views.length <= 1) { setStatus("The drawing's only view can't be deleted", true); return; }
+  const val = getPtr(spec, ptr);
+  if (val === undefined) { setStatus("This item is not in the drawing JSON any more; re-render first", true); return; }
+  let next;
+  try { next = removeSpec(specText, ptr); } catch (e) { setStatus(e.message, true); return; }
+  const parts = ptr.split("/"), i = +parts.pop(), arr = parts.join("/");
+  const what = entryName(ptr, val);
+  deleted.push({ arr, i, val, what });
+  select(null);
+  pendingRemap = s => shiftPtr(s, arr, i, -1);
+  source.json = next; source.file = null; specText = next;
+  await renderDrawing(source, true);
+  pendingRemap = null;
+  setStatus(`Deleted ${what}. Ctrl+Z undoes it (Save writes the change)`);
+}
+async function restoreDeleted() {
+  const d = deleted.pop();
+  if (!d || busy || !specText) return;
+  let next;
+  try { next = insertSpec(specText, d.arr, d.i, d.val); } catch (e) { setStatus("Could not put back " + d.what + ": " + e.message, true); return; }
+  pendingRemap = s => shiftPtr(s, d.arr, d.i, 1);
+  source.json = next; source.file = null; specText = next;
+  await renderDrawing(source, true);
+  pendingRemap = null;
+  setStatus(`Put back ${d.what}` + (deleted.length ? ` (Ctrl+Z again for ${deleted[deleted.length - 1].what})` : ""));
+}
+
+// ------------------------------------------------------------ comma fixing
+/** Edits that fix the commas of JSON `text`: a missing comma between two values on
+ *  different lines is added, a comma before `}` / `]` (or doubled, or straight after
+ *  `{` / `[`) is removed. A comma next to `cursor` (an offset, -1 for none) is left. */
+function commaFixes(text, cursor = -1) {
+  const toks = [];
+  for (let i = 0; i < text.length;) {
+    const c = text[i];
+    if (/\s/.test(c)) { i++; continue; }
+    if (c === "/" && text[i + 1] === "/") { while (i < text.length && text[i] !== "\n") i++; continue; }
+    if (c === "/" && text[i + 1] === "*") { const j = text.indexOf("*/", i + 2); i = j < 0 ? text.length : j + 2; continue; }
+    const t = { s: i };
+    if (c === '"') {
+      i++;
+      while (i < text.length && text[i] !== '"' && text[i] !== "\n") i += text[i] === "\\" ? 2 : 1;
+      if (text[i] === '"') i++;
+      t.k = "v";
+    } else if ("{}[]:,".includes(c)) { i++; t.k = c; }
+    else { while (i < text.length && /[\w.+\-]/.test(text[i])) i++; if (i === t.s) i++; t.k = "v"; }
+    t.e = i;
+    toks.push(t);
+  }
+  const edits = [];
+  const ends = k => k === "v" || k === "}" || k === "]", starts = k => k === "v" || k === "{" || k === "[";
+  for (let n = 0; n + 1 < toks.length; n++) {
+    const a = toks[n], b = toks[n + 1], prev = toks[n - 1];
+    if (ends(a.k) && starts(b.k) && text.slice(a.e, b.s).includes("\n")) edits.push({ at: a.e, del: 0, ins: "," });
+    else if (a.k === "," && (b.k === "}" || b.k === "]" || b.k === "," || (prev && (prev.k === "{" || prev.k === "["))) && !(cursor >= a.s && cursor <= b.s))
+      edits.push({ at: a.s, del: 1, ins: "" });
+  }
+  if (toks.length && toks[toks.length - 1].k === "," && !(cursor >= toks[toks.length - 1].s)) edits.push({ at: toks[toks.length - 1].s, del: 1, ins: "" });
+  return edits;
+}
+function applyFixes(text, edits) {
+  let out = text;
+  for (const d of [...edits].sort((x, y) => y.at - x.at)) out = out.slice(0, d.at) + d.ins + out.slice(d.at + d.del);
+  return out;
+}
+let fixing = false;
+/** Fix the commas in the editor. While typing (`always` false) only when that makes
+ *  the JSON valid; returns the editor's text afterwards. */
+function autoFixCommas(always) {
+  const text = editorText();
+  const mon = monacoEditor && !fallbackBox;
+  let cursor = -1;
+  if (!always) cursor = mon ? monacoEditor.getModel().getOffsetAt(monacoEditor.getPosition()) : fallbackBox ? fallbackBox.selectionStart : -1;
+  const edits = commaFixes(text, cursor);
+  if (!edits.length) return text;
+  const fixed = applyFixes(text, edits);
+  if (!always) { try { JSON.parse(fixed); } catch { return text; } }
+  fixing = true;
+  try {
+    if (mon) {
+      const m = monacoEditor.getModel();
+      monacoEditor.executeEdits("commas", edits.map(d => {
+        const a = m.getPositionAt(d.at), b = m.getPositionAt(d.at + d.del);
+        return { range: { startLineNumber: a.lineNumber, startColumn: a.column, endLineNumber: b.lineNumber, endColumn: b.column }, text: d.ins };
+      }));
+      monacoEditor.pushUndoStop();
+    } else if (fallbackBox) {
+      const pos = fallbackBox.selectionStart;
+      const shift = edits.filter(d => d.at < pos).reduce((n, d) => n + d.ins.length - d.del, 0);
+      fallbackBox.value = fixed;
+      fallbackBox.setSelectionRange(pos + shift, pos + shift);
+    }
+  } finally { fixing = false; }
+  const add = edits.filter(d => d.ins).length, del = edits.length - add;
+  annMsg([add && `added ${add} missing comma${add > 1 ? "s" : ""}`, del && `removed ${del} extra comma${del > 1 ? "s" : ""}`].filter(Boolean).join(", "), false);
+  return editorText();
+}
+
+function editorText() { return monacoEditor && !fallbackBox ? monacoEditor.getValue() : fallbackBox ? fallbackBox.value : ""; }
+async function applyAnnEdit() {
+  if (!editing) return;
+  let val;
+  try { val = JSON.parse(autoFixCommas(true)); } catch (e) { annMsg("Not valid JSON: " + e.message, true); return; }
+  let next;
+  try { next = specWith(val); } catch (e) { annMsg("Could not update the drawing JSON: " + e.message, true); return; }
+  // kept in the page until Save / Save as
+  source.json = next; source.file = null;
+  specText = next;
+  closeAnnEditor();
+  await renderDrawing(source, true);
+  updateDirty();
+}
+function refreshInsert() {
+  const b = $("annInsert"), sels = selectionSelectors();
+  b.hidden = !sels.length;
+  if (sels.length) { b.textContent = "Insert " + (sels.length === 1 ? sels[0] : "selection"); b.title = "Insert at the cursor: " + sels.join(", "); }
+}
+$("annInsert").onclick = () => {
+  const sels = selectionSelectors();
+  if (!sels.length) return;
+  const sel = sels[0];
+  if (monacoEditor && !fallbackBox) {
+    const m = monacoEditor.getModel(), r = monacoEditor.getSelection();
+    const before = m.getValueInRange({ startLineNumber: r.startLineNumber, startColumn: Math.max(1, r.startColumn - 1), endLineNumber: r.startLineNumber, endColumn: r.startColumn });
+    const after = m.getValueInRange({ startLineNumber: r.endLineNumber, startColumn: r.endColumn, endLineNumber: r.endLineNumber, endColumn: r.endColumn + 1 });
+    // inside "" insert the escaped text, elsewhere a JSON string
+    const text = before === '"' && after === '"' ? JSON.stringify(sel).slice(1, -1) : JSON.stringify(sel);
+    monacoEditor.executeEdits("selection", [{ range: r, text, forceMoveMarkers: true }]);
+    monacoEditor.focus();
+  } else if (fallbackBox) {
+    const a = fallbackBox.selectionStart;
+    fallbackBox.setRangeText(JSON.stringify(sel), a, fallbackBox.selectionEnd, "end");
+    fallbackBox.focus();
+  }
+};
+
+// ------------------------------------------------------------ live preview in the editor
+let previewTimer = null, previewSeq = 0;
+function schedulePreview() {
+  refreshArrows();
+  if (fixing) return;              // the comma fix is previewed by the run that made it
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(runPreview, 600);
+}
+function previewMsg(m, err) { const e = $("annPreviewMsg"); e.textContent = m || ""; e.classList.toggle("err", !!err); }
+/** Show `svgText` in the preview, with the user's moves, zoomed to the edited annotation. */
+function showPreview(svgText, ptr) {
+  const box = $("annPreview");
+  const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
+  if (doc.documentElement.nodeName !== "svg") return;
+  sanitize(doc.documentElement);
+  const root = document.importNode(doc.documentElement, true);
+  root.removeAttribute("width"); root.removeAttribute("height");
+  root.classList.remove("drawing", "picking", "panning");
+  root.classList.add("preview");
+  clear(box).appendChild(root);
+  box.classList.remove("stale");
+  // the same moves as on the drawing
+  initViews(root);
+  for (const g of root.querySelectorAll(":scope > g.view")) {
+    const src = svg && viewById(g.id);
+    if (src) for (const k of ["dx", "dy"]) if (src.dataset[k]) g.dataset[k] = src.dataset[k];
+  }
+  renderViews(root);
+  const anns = [...root.querySelectorAll("g.ann")], cur = svg ? [...svg.querySelectorAll("g.ann")] : [];
+  const sameAnns = anns.length === cur.length && anns.every((g, i) => g.dataset.kind === cur[i].dataset.kind);
+  anns.forEach((g, i) => { if (sameAnns) for (const k of keysOf(g)) if (cur[i].dataset[k]) g.dataset[k] = cur[i].dataset[k]; render(g); });
+  // zoom to the edited annotation's view and highlight it
+  const targets = [...root.querySelectorAll(`g.ann[data-src="${CSS.escape(ptr)}"]`)];
+  if (/^\/title(_block)?$/.test(ptr)) return true;              // the title block: the whole sheet
+  const asView = root.querySelector(`:scope > g.view[data-src="${CSS.escape(ptr)}"]`);
+  if (asView) { asView.classList.add("sel"); return true; }   // a view: the whole sheet, to see the views around it
+  targets.forEach(g => g.classList.add("sel"));
+  const view = targets.length ? targets[0].closest("g.view") : null;
+  if (view) {
+    const b = view.getBoundingClientRect();
+    const ctm = root.getScreenCTM().inverse();
+    const p0 = new DOMPoint(b.left, b.top).matrixTransform(ctm), p1 = new DOMPoint(b.right, b.bottom).matrixTransform(ctm);
+    const m = 6;
+    root.setAttribute("viewBox", [p0.x - m, p0.y - m, p1.x - p0.x + 2 * m, p1.y - p0.y + 2 * m].map(r3).join(" "));
+  }
+  return targets.length > 0;
+}
+async function runPreview() {
+  if (!editing) return;
+  const seq = ++previewSeq;
+  let val;
+  try { val = JSON.parse(autoFixCommas(false)); } catch (e) { previewMsg("waiting for valid JSON…"); return; }
+  let text;
+  try { text = specWith(val); } catch (e) { previewMsg(e.message, true); return; }
+  previewMsg("rendering…");
+  $("annPreview").classList.add("stale");
+  try {
+    const body = source.path ? { path: source.path, json: text } : { json: text, name: source.name };
+    const out = await (await fetch("/api/render", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).json();
+    if (seq !== previewSeq || !editing) return;
+    if (out.error) { previewMsg(out.error, true); return; }
+    const found = showPreview(out.svg, editing.ptr);
+    const w = (out.warnings || []).length;
+    previewMsg((found ? "" : "the annotation was not drawn · ") + (w ? `${w} warning${w > 1 ? "s" : ""}: ${out.warnings.join("; ")}` : "no warnings"), !found || w > 0);
+  } catch (e) {
+    if (seq === previewSeq) previewMsg("stepdraw is not reachable", true);
+  }
+}
+
+function closeAnnEditor() { editing = null; clearTimeout(previewTimer); if ($("annDlg").open) $("annDlg").close(); }
+$("annApply").onclick = applyAnnEdit;
+$("annCancel").onclick = closeAnnEditor;
+$("annDlg").addEventListener("close", () => { editing = null; });
+stage.addEventListener("contextmenu", e => {
+  if (!svg) return;
+  e.preventDefault();
+  const g = annAt(e);
+  if (g) {
+    select(g);
+    if (!g.dataset.src) { setStatus("Re-render the drawing to edit this annotation", true); return; }
+    openAnnEditor(g);
+    return;
+  }
+  if (inTitleBlock(e)) { openTitleEditor(); return; }
+  const v = viewAt(e);
+  if (!v) return;
+  if (!v.dataset.src) { setStatus("Re-render the drawing to edit this view", true); return; }
+  openAnnEditor(v);
+});
+
+function openFile(f) {
+  if (!f) return;
+  if (!/\.json$/i.test(f.name)) { setStatus("Choose a drawing .json file", true); return; }
+  if (dirty() && !confirm("The drawing JSON has unsaved edits. Open another drawing and lose them?")) return;
+  f.text().then(t => { $("drawings").value = ""; deleted.length = 0; renderDrawing({ file: f, json: t, name: f.name }, false); });
+}
+$("file").addEventListener("change", e => { openFile(e.target.files[0]); e.target.value = ""; });
+$("drawings").addEventListener("change", e => {
+  if (!e.target.value) return;
+  if (dirty() && !confirm("The drawing JSON has unsaved edits. Open another drawing and lose them?")) { e.target.value = source && source.path || ""; return; }
+  deleted.length = 0;
+  renderDrawing({ path: e.target.value }, false);
+});
+$("rerender").onclick = () => source && renderDrawing(source, true);
+main.addEventListener("dragover", e => { e.preventDefault(); main.classList.add("drag"); });
+main.addEventListener("dragleave", () => main.classList.remove("drag"));
+main.addEventListener("drop", e => { e.preventDefault(); main.classList.remove("drag"); openFile(e.dataTransfer.files[0]); });
+
+// ------------------------------------------------------------ saving the drawing JSON
+async function postJson(url, body) {
+  return (await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).json();
+}
+/** Save the drawing JSON: to its file, or (`asNew`, or opened from elsewhere) under a name asked for. */
+async function saveJson(asNew) {
+  if (!specText || busy) return;
+  let path = source.path, create = false;
+  if (asNew || !path) {
+    let name = prompt("Save the drawing JSON as (a path inside the served folder):", path || source.name || "drawing.json");
+    if (!name || !(name = name.trim())) return;
+    if (!/\.json$/i.test(name)) name += ".json";
+    path = name; create = true;
+  }
+  let text = specText, overwrite = false;
+  try {
+    for (let tries = 0; tries < 3; tries++) {
+      const out = await postJson("/api/save", { path, json: text, create, overwrite });
+      if (out.error) { setStatus(out.error, true); return; }
+      if (out.exists) { if (!confirm(`${path} already exists. Replace it?`)) { setStatus("Not saved"); return; } overwrite = true; continue; }
+      if (out.step_file) { text = spliceSpec(text, "/step_file", out.step_file); continue; }   // so it is found from there
+      specText = savedText = text;
+      source = { path: out.path };
+      const sel = $("drawings");
+      if (![...sel.options].some(o => o.value === out.path)) { const o = document.createElement("option"); o.value = o.textContent = out.path; sel.appendChild(o); }
+      sel.value = out.path;
+      fileName = out.path.split("/").pop().replace(/\.json$/i, "") + ".svg";
+      updateDirty();
+      setStatus("Saved " + out.path);
+      return;
+    }
+    setStatus("Could not save " + path, true);
+  } catch (e) {
+    setStatus("Could not reach stepdraw: " + e.message, true);
+  }
+}
+$("saveJson").onclick = () => saveJson(false);
+$("saveAs").onclick = () => saveJson(true);
+document.addEventListener("keydown", e => {
+  if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "s") return;
+  e.preventDefault();                       // never the browser's "save page"
+  if (!$("annDlg").open) saveJson(e.shiftKey);
+}, true);
+window.addEventListener("beforeunload", e => { if (dirty()) { e.preventDefault(); e.returnValue = ""; } });
+
+async function listDrawings() {
+  const sel = $("drawings");
+  try {
+    if (location.protocol === "file:") throw new Error("file");
+    const res = await fetch("/api/files");
+    const out = await res.json();
+    for (const f of out.files) { const o = document.createElement("option"); o.value = o.textContent = f; sel.appendChild(o); }
+    sel.disabled = false;
+    sel.title = "Drawing JSON files in " + out.folder;
+    if (!out.files.length) setStatus("No drawing JSON files in " + out.folder);
+    // ?drawing=<path> opens that drawing straight away
+    const want = new URLSearchParams(location.search).get("drawing");
+    if (want && out.files.includes(want)) { sel.value = want; renderDrawing({ path: want }, false); }
+  } catch (e) {
+    $("emptyMsg").innerHTML = "<strong>stepdraw is not running</strong>This page renders drawings through stepdraw. Start it with " +
+      "<code>stepdraw serve &lt;folder&gt;</code> and open <code>http://127.0.0.1:8080/</code>.";
+    $("file").disabled = true;
+  }
+}
+listDrawings();
+
+$("undo").onclick = undoAny;
+$("redo").onclick = redo;
+$("reset").onclick = () => selected && reset([selected]);
+$("resetAll").onclick = () => svg && reset([...svg.querySelectorAll("g.ann, :scope > g.view")]);
+$("fit").onclick = fit;
+$("save").onclick = () => {
+  const out = svg.cloneNode(true);
+  out.classList.remove("drawing", "panning", "picking");
+  out.querySelectorAll(".pick").forEach(g => g.remove());     // editor-only pick layer
+  if (!out.getAttribute("class")) out.removeAttribute("class");
+  out.querySelectorAll(".sel").forEach(g => g.classList.remove("sel"));
+  out.querySelectorAll('g[data-role="dimext"]:empty').forEach(g => g.remove());
+  out.setAttribute("viewBox", viewBox0.join(" "));
+  if (out.dataset.width) out.setAttribute("width", out.dataset.width);
+  if (out.dataset.height) out.setAttribute("height", out.dataset.height);
+  delete out.dataset.width; delete out.dataset.height;
+  const text = '<?xml version="1.0" encoding="UTF-8" standalone="no"?>\n' + new XMLSerializer().serializeToString(out);
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], { type: "image/svg+xml" }));
+  a.download = fileName;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+};
+</script>
+</body>
+</html>
