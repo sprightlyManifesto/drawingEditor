@@ -11,6 +11,34 @@ pub enum Projection {
     First,
 }
 
+/// How smooth (tangent) edges are drawn, e.g. where a fillet meets the face
+/// it blends into.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TangentEdges {
+    /// Not drawn.
+    None,
+    /// Thin grey witness lines (default).
+    Thin,
+    /// Like any other visible edge.
+    Visible,
+}
+
+impl<'de> Deserialize<'de> for TangentEdges {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        // "none" | "thin" | "visible", or true (visible) / false (none)
+        match serde_json::Value::deserialize(d)? {
+            serde_json::Value::Bool(b) => Ok(if b { TangentEdges::Visible } else { TangentEdges::None }),
+            serde_json::Value::String(s) => match s.to_ascii_lowercase().as_str() {
+                "none" | "off" | "hide" | "hidden" => Ok(TangentEdges::None),
+                "thin" | "witness" | "grey" | "gray" => Ok(TangentEdges::Thin),
+                "visible" | "on" | "show" => Ok(TangentEdges::Visible),
+                o => Err(serde::de::Error::custom(format!("tangent_edges: expected \"none\", \"thin\" or \"visible\", not \"{}\"", o))),
+            },
+            o => Err(serde::de::Error::custom(format!("tangent_edges: expected \"none\", \"thin\" or \"visible\", not {}", o))),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -33,6 +61,9 @@ pub struct Config {
     pub line_border: f64,
     pub hidden_lines: bool,
     pub centre_lines: bool,
+    /// Smooth (tangent) edges, e.g. where a fillet meets a face: "thin"
+    /// (default, thin grey witness lines), "none" or "visible".
+    pub tangent_edges: TangentEdges,
     pub arrow_length: f64,
     pub arrow_width: f64,
     /// Distance from the geometry to the first dimension line.
@@ -67,8 +98,9 @@ impl Default for Config {
             line_hidden: 0.25,
             line_thin: 0.25,
             line_border: 0.7,
-            hidden_lines: true,
+            hidden_lines: false,
             centre_lines: true,
+            tangent_edges: TangentEdges::Thin,
             arrow_length: 3.0,
             arrow_width: 1.0,
             dim_offset: 10.0,
@@ -96,6 +128,9 @@ pub struct TitleBlock {
     pub finish: String,
     pub notes: String,
     pub revision: String,
+    pub issue: String,
+    /// General tolerances box (default "UNLESS STATED: X.X ±0.4  X.XX ±0.15  ANGLES ±0.5°").
+    pub general_tolerances: Option<String>,
     pub drawn_by: String,
     pub date: String,
 }
@@ -171,6 +206,9 @@ pub struct DimSpec {
     pub gdt: Vec<GdtSpec>,
     /// Datum feature symbol attached to this dimension (feature of size).
     pub datum: Option<String>,
+    /// Lines merged under the dimension text (notes, thread callouts merged into it).
+    #[serde(skip)]
+    pub extra: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -197,8 +235,10 @@ pub struct GdtSpec {
     pub all_around: bool,
     /// Datum feature symbol attached to the frame (the frame's feature is that datum).
     pub datum: Option<String>,
-    /// Name datum symbols can refer to with "gdt": "<id>".
+    /// Name datum symbols (and merged items) can refer to with "gdt": "<id>".
     pub id: Option<String>,
+    /// Merged onto the leader of the dimension, frame, note or thread with this id.
+    pub merge: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -234,11 +274,15 @@ pub struct NoteSpec {
     pub text: String,
     pub attach: Option<String>,
     pub boxed: bool,
+    /// Name other items can be merged onto with "merge": "<id>".
+    pub id: Option<String>,
+    /// Merged onto the leader of the dimension, frame, note or thread with this id.
+    pub merge: Option<String>,
 }
 
 impl Default for NoteSpec {
     fn default() -> Self {
-        NoteSpec { text: String::new(), attach: None, boxed: true }
+        NoteSpec { text: String::new(), attach: None, boxed: true, id: None, merge: None }
     }
 }
 
@@ -250,6 +294,34 @@ pub struct Annotations {
     pub datums: Vec<DatumSpec>,
     pub datum_targets: Vec<DatumTargetSpec>,
     pub notes: Vec<NoteSpec>,
+    pub threads: Vec<ThreadSpec>,
+}
+
+/// A cosmetic thread on a hole (internal) or a shaft (external).
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct ThreadSpec {
+    /// The threaded cylindrical face (or a circular edge of it).
+    pub of: String,
+    /// Designation: "M6", "M10x1.25" (sets the major diameter and pitch).
+    pub size: Option<String>,
+    /// Major diameter (mm) when there is no metric size.
+    pub major: Option<f64>,
+    pub pitch: Option<f64>,
+    /// Thread length from the open end (default: the whole hole / shaft).
+    pub depth: Option<f64>,
+    /// Also every alike hole / shaft: same diameter, length and direction.
+    pub all_alike: bool,
+    /// Leader note with the designation (default true).
+    pub callout: Option<bool>,
+    /// Callout text instead of the automatic one.
+    pub text: Option<String>,
+    /// "internal" or "external" (default: hole or shaft, from the face).
+    pub kind: Option<String>,
+    /// Name other items can be merged onto with "merge": "<id>".
+    pub id: Option<String>,
+    /// Callout merged onto the leader of the dimension, frame, note or thread with this id.
+    pub merge: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -259,10 +331,18 @@ pub struct DetailSpec {
     pub name: Option<String>,
     /// Centre of the detail: a selector (its reference point) ...
     pub center: Option<String>,
-    /// ... or a model point.
+    /// ... or a model point (default: the centre of the part).
     pub point: Option<[f64; 3]>,
-    /// Radius of the detail circle in model units (mm).
+    /// Radius of the detail circle in model units (mm); for an ellipse the
+    /// semi-axis along `angle`. Default: about an eighth of the part's size.
+    #[serde(default)]
     pub radius: f64,
+    /// "circle" (default) or "ellipse".
+    pub shape: Option<String>,
+    /// Ellipse: the other semi-axis (mm), square to `angle` (default 0.6 x radius).
+    pub radius2: Option<f64>,
+    /// Ellipse: angle of the `radius` axis on the sheet, degrees anticlockwise from horizontal.
+    pub angle: Option<f64>,
     /// Scale of the detail view (default: twice the parent's).
     pub scale: Option<f64>,
     /// Sheet position of the detail centre (mm from bottom-left); default:
@@ -271,6 +351,8 @@ pub struct DetailSpec {
     pub hidden_lines: Option<bool>,
     /// Draw the detail circle as the boundary of the detail view (default true).
     pub border: Option<bool>,
+    /// Move of the "DETAIL D (2:1)" label from its default place under the view [x, y] (sheet mm).
+    pub title_offset: Option<[f64; 2]>,
     #[serde(flatten)]
     pub ann: Annotations,
 }
@@ -286,12 +368,20 @@ pub struct SectionSpec {
     pub position: String,
     /// The cutting plane passes through this feature (selector) ...
     pub through: Option<String>,
-    /// ... or through this model point.
+    /// ... or through this model point (default: the centre of the part).
     pub point: Option<[f64; 3]>,
     /// Hidden lines behind the cut (default false).
     pub hidden_lines: Option<bool>,
+    /// Distance (sheet mm) from the parent view's origin along the projection
+    /// axis; default: next to the parent, clear of other views.
+    pub distance: Option<f64>,
     pub hatch_angle: Option<f64>,
     pub hatch_spacing: Option<f64>,
+    /// Move of the "SECTION A-A" label from its default place under the view [x, y] (sheet mm).
+    pub title_offset: Option<[f64; 2]>,
+    /// Views projected from the section view, aligned with it (not sectioned).
+    #[serde(default)]
+    pub projected: Vec<ProjectedSpec>,
     #[serde(default)]
     pub details: Vec<DetailSpec>,
     #[serde(flatten)]
@@ -304,6 +394,9 @@ pub struct ProjectedSpec {
     /// top | bottom | left | right | rear : the side the view is looked at from.
     pub position: String,
     pub hidden_lines: Option<bool>,
+    /// Distance (sheet mm) from the parent view's origin along the projection
+    /// axis; default: next to the parent, clear of other views.
+    pub distance: Option<f64>,
     /// Views projected from this one, aligned with it.
     #[serde(default)]
     pub projected: Vec<ProjectedSpec>,

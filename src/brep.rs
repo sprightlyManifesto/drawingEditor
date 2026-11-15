@@ -72,6 +72,24 @@ impl Surface {
             SurfKind::Other(_) => "OTHER",
         }
     }
+    /// Unit normal at a point on the surface (either sense), if the surface type is known.
+    pub fn normal_at(&self, p: V3) -> Option<V3> {
+        let fr = &self.fr;
+        let q = fr.local(p);
+        let radial = || {
+            let l = (q.x * q.x + q.y * q.y).sqrt();
+            (l > 1e-12).then(|| (fr.x * q.x + fr.y * q.y) * (1.0 / l))
+        };
+        let n = match self.kind {
+            SurfKind::Plane => fr.z,
+            SurfKind::Cylinder { .. } => radial()?,
+            SurfKind::Cone { semi, .. } => radial()? - fr.z * semi.tan(),
+            SurfKind::Sphere { .. } => p - fr.o,
+            SurfKind::Torus { major, .. } => p - (fr.o + radial()? * major),
+            SurfKind::Other(_) => return None,
+        };
+        (n.len() > 1e-12).then(|| n.norm())
+    }
     pub fn periodic(&self) -> bool {
         !matches!(self.kind, SurfKind::Plane | SurfKind::Other(_))
     }
@@ -163,6 +181,28 @@ impl Face {
         }
     }
 
+    /// Whether `q` lies within `tol` of the face's boundary (in 3D).
+    pub fn near_boundary(&self, q: V3, tol: f64) -> bool {
+        for l in &self.loop_pts {
+            let n = l.len();
+            for i in 0..n {
+                let (a, b) = (l[i], l[(i + 1) % n]);
+                let ab = b - a;
+                let ll = ab.dot(ab);
+                let t = if ll > 0.0 { ((q - a).dot(ab) / ll).clamp(0.0, 1.0) } else { 0.0 };
+                if q.dist(a + ab * t) < tol {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Unit normal pointing out of the solid at a point of the face, if known.
+    pub fn outward_at(&self, p: V3) -> Option<V3> {
+        self.surf.normal_at(p).map(|n| if self.same_sense { n } else { -n })
+    }
+
     /// Range of the axial parameter v over the face boundary.
     pub fn v_range(&self) -> (f64, f64) {
         let mut lo = f64::INFINITY;
@@ -195,6 +235,10 @@ impl Face {
     pub fn contains_uv(&self, q: V2) -> bool {
         let mut inside = false;
         if self.surf.periodic() {
+            // A point exactly at the angle of a boundary vertex (above all on
+            // the seam, u = 0) makes the crossing count ambiguous; testing a
+            // hair to one side gives the same answer without the tie.
+            let q = v2(q.x + 1e-9, q.y);
             // Ray from (u, -inf) up to q: count boundary crossings.
             for l in &self.uv_loops {
                 let n = l.len();
@@ -250,6 +294,20 @@ pub struct Model {
 impl Model {
     pub fn diag(&self) -> f64 {
         self.bbox.diag().max(1e-6)
+    }
+    /// Whether edge `ei` is a smooth (tangent) join of its two faces, such as
+    /// the boundary between a fillet and the face it blends into.
+    pub fn smooth_edge(&self, ei: usize) -> bool {
+        let e = &self.edges[ei];
+        if e.faces.len() != 2 || e.pts.len() < 2 {
+            return false;
+        }
+        let (a, b) = (&self.faces[e.faces[0]].surf, &self.faces[e.faces[1]].surf);
+        let n = e.pts.len() - 1;
+        [n / 4, n / 2, 3 * n / 4].iter().all(|&i| match (a.normal_at(e.pts[i]), b.normal_at(e.pts[i])) {
+            (Some(x), Some(y)) => x.dot(y).abs() > 1.0 - 1e-6,
+            _ => false,
+        })
     }
 }
 

@@ -2,6 +2,7 @@
 //!
 //! GET  /              the editor page
 //! GET  /api/files     drawing JSON files under the folder
+//! GET  /api/help      the drawing JSON reference (docs/drawing-json.md, Markdown)
 //! POST /api/render    {"path": "<file under the folder>"} or
 //!                     {"json": "<drawing JSON text>", "name": "<file name>"}
 //!                     -> {"svg", "warnings", "name", "path", "spec"} or {"error"}
@@ -9,6 +10,8 @@
 //!                     were that file, for previews)
 //! POST /api/selector  {"path" | "json", "kind": "faces|edges|vertices", "ids": [..]}
 //!                     -> {"selector"}
+//! POST /api/resolve   {"path" | "json", "selectors": [..]}
+//!                     -> {"results": {"<selector>": {"kind", "ids"} | {"error"}}}
 //! POST /api/save      {"path": "<drawing JSON under the folder>", "json": "<new text>"}
 //!                     -> {"ok": true, "path"} or {"error"}
 //!                     with "create": true (save as) the file may be new; then
@@ -31,6 +34,8 @@ use std::time::SystemTime;
 static MODEL: Mutex<Option<(PathBuf, Option<SystemTime>, crate::brep::Model)>> = Mutex::new(None);
 
 const EDITOR: &str = include_str!("../tools/editor.html");
+/// The drawing JSON reference, shown in the editor's Help panel.
+const HELP: &str = include_str!("../docs/drawing-json.md");
 const MAX_BODY: usize = 8 << 20;
 
 pub fn serve(dir: &Path, port: u16, cfg_path: Option<&str>) -> Result<(), String> {
@@ -106,7 +111,15 @@ fn handle(stream: TcpStream, root: &Path, port: u16, cfg_path: Option<&str>) -> 
     let path = req.path.split('?').next().unwrap_or("/");
     match (req.method.as_str(), path) {
         ("GET", "/") | ("GET", "/index.html") => respond(&stream, "200 OK", "text/html; charset=utf-8", EDITOR.as_bytes()),
+        ("GET", "/api/help") => respond(&stream, "200 OK", "text/markdown; charset=utf-8", HELP.as_bytes()),
         ("GET", "/api/files") => respond_json(&stream, "200 OK", &json!({ "folder": root.display().to_string(), "files": list_drawings(root) })),
+        ("POST", "/api/resolve") => {
+            let v = match resolve_request(root, &req.body) {
+                Ok(v) => v,
+                Err(e) => json!({ "error": e }),
+            };
+            respond_json(&stream, "200 OK", &v)
+        }
         ("POST", "/api/selector") => {
             let v = match selector_request(root, &req.body) {
                 Ok(s) => json!({ "selector": s }),
@@ -251,21 +264,57 @@ fn selector_request(root: &Path, body: &[u8]) -> Result<String, String> {
         _ => return Err("bad request: \"kind\" must be faces, edges or vertices".into()),
     };
     let ids: Vec<usize> = req.get("ids").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_u64).map(|i| i as usize).collect()).unwrap_or_default();
-    let mtime = std::fs::metadata(&d.step).and_then(|m| m.modified()).ok();
+    with_model(&d.step, |m| {
+        let n = match kind {
+            Kind::Face => m.faces.len(),
+            Kind::Edge => m.edges.len(),
+            Kind::Vertex => m.verts.len(),
+        };
+        if ids.iter().any(|&i| i >= n) {
+            return Err("the model has changed; re-render the drawing".into());
+        }
+        Ok(crate::selector::find_selector(m, kind, &ids))
+    })
+}
+
+/// Run `f` on the model of `step`, loaded once and kept while the file is unchanged.
+fn with_model<T>(step: &Path, f: impl FnOnce(&crate::brep::Model) -> Result<T, String>) -> Result<T, String> {
+    let mtime = std::fs::metadata(step).and_then(|m| m.modified()).ok();
     let mut cache = MODEL.lock().map_err(|_| "model cache poisoned".to_string())?;
-    if !cache.as_ref().is_some_and(|(p, t, _)| *p == d.step && *t == mtime) {
-        *cache = Some((d.step.clone(), mtime, crate::load_model(&d.step)?));
+    if !cache.as_ref().is_some_and(|(p, t, _)| p == step && *t == mtime) {
+        *cache = Some((step.to_path_buf(), mtime, crate::load_model(step)?));
     }
-    let m = &cache.as_ref().unwrap().2;
-    let n = match kind {
-        Kind::Face => m.faces.len(),
-        Kind::Edge => m.edges.len(),
-        Kind::Vertex => m.verts.len(),
-    };
-    if ids.iter().any(|&i| i >= n) {
-        return Err("the model has changed; re-render the drawing".into());
-    }
-    Ok(crate::selector::find_selector(m, kind, &ids))
+    f(&cache.as_ref().unwrap().2)
+}
+
+/// The model items each selector picks (for highlighting in the editor).
+fn resolve_request(root: &Path, body: &[u8]) -> Result<Value, String> {
+    use crate::selector::Kind;
+    let req: Value = serde_json::from_slice(body).map_err(|e| format!("bad request: {}", e))?;
+    let d = drawing_of(root, &req)?;
+    let sels: Vec<String> = req.get("selectors").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect()).unwrap_or_default();
+    with_model(&d.step, |m| {
+        let mut out = serde_json::Map::new();
+        for s in sels.iter().take(200) {
+            let v = match crate::selector::select(m, s) {
+                Ok(sel) => {
+                    let kind = match sel.kind {
+                        Kind::Face => "faces",
+                        Kind::Edge => "edges",
+                        Kind::Vertex => "vertices",
+                    };
+                    // a face also lights up its edges (in views where it is seen edge-on)
+                    let mut edges: Vec<usize> = if kind == "faces" { sel.ids.iter().flat_map(|&f| m.faces[f].edges.iter().copied()).collect() } else { vec![] };
+                    edges.sort();
+                    edges.dedup();
+                    json!({ "kind": kind, "ids": sel.ids, "edges": edges })
+                }
+                Err(e) => json!({ "error": e }),
+            };
+            out.insert(s.clone(), v);
+        }
+        Ok(json!({ "results": out }))
+    })
 }
 
 /// Write an edited drawing JSON back to its file (only an existing drawing

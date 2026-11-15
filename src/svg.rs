@@ -217,6 +217,7 @@ pub fn style(cfg: &crate::config::Config) -> String {
         r#"<style>
   line, path, circle, rect {{ fill: none; stroke: #000; stroke-linecap: round; stroke-linejoin: round; }}
   .visible {{ stroke-width: {vis}; }}
+  .tangent {{ stroke-width: {thin}; stroke: #888; }}
   .hidden {{ stroke-width: {hid}; stroke-dasharray: 3 1.5; stroke-linecap: butt; }}
   .center {{ stroke-width: {thin}; stroke-dasharray: 8 1.5 1.5 1.5; stroke-linecap: butt; }}
   .phantom {{ stroke-width: {thin}; stroke-dasharray: 10 1.5 1.5 1.5 1.5 1.5; stroke-linecap: butt; }}

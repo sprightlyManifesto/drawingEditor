@@ -42,6 +42,34 @@
   #warnings li { margin: 3px 0; }
   #warnings[hidden] { display: none; }
   #empty code { font: 13px ui-monospace, monospace; background: var(--accent-soft); color: var(--ink); padding: 1px 5px; border-radius: 4px; }
+  dialog#helpDlg { position: fixed; inset: 64px 16px 16px auto; margin: 0; width: min(680px, calc(100vw - 32px)); height: auto;
+                   max-height: none; padding: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--panel);
+                   color: var(--ink); box-shadow: 0 12px 40px rgba(0, 0, 0, .3); z-index: 40; }
+  dialog#helpDlg[open] { display: flex; flex-direction: column; }
+  dialog#helpDlg::backdrop { background: transparent; }
+  #helpDlg .hhead { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  #helpDlg .hhead strong { margin-right: auto; }
+  #helpDlg .hhead select { max-width: 24ch; }
+  #helpFind { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; width: 12ch; }
+  #helpBody { position: relative; overflow: auto; padding: 4px 18px 24px; font-size: 13.5px; line-height: 1.5; flex: 1; min-height: 0; }
+  #helpBody h1 { font-size: 20px; margin: 14px 0 8px; }
+  #helpBody h2 { font-size: 16px; margin: 22px 0 6px; padding-top: 10px; border-top: 1px solid var(--line); }
+  #helpBody h3 { font-size: 14px; margin: 16px 0 4px; }
+  #helpBody p { margin: 6px 0; }
+  #helpBody ul { margin: 6px 0; padding-left: 20px; }
+  #helpBody li { margin: 2px 0; }
+  #helpBody table { border-collapse: collapse; margin: 8px 0; font-size: 12.5px; width: 100%; }
+  #helpBody th, #helpBody td { border: 1px solid var(--line); padding: 3px 7px; text-align: left; vertical-align: top; }
+  #helpBody th { background: var(--accent-soft); }
+  #helpBody code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--accent-soft); padding: 0 4px; border-radius: 3px; }
+  #helpBody .ex { position: relative; margin: 8px 0; }
+  #helpBody pre { margin: 0; padding: 10px 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; overflow: auto; }
+  #helpBody pre code { background: none; padding: 0; font-size: 12px; }
+  #helpBody .ex .acts { position: absolute; top: 6px; right: 6px; display: flex; gap: 4px; opacity: .25; transition: opacity .15s; }
+  #helpBody .ex:hover .acts, #helpBody .ex .acts:focus-within { opacity: 1; }
+  #helpBody .ex .acts button { padding: 1px 8px; font-size: 12px; }
+  #helpBody mark { background: #ffe066; color: #000; border-radius: 2px; }
+  #helpBody mark.cur { background: #ff9f1c; }
   #name.dirty::after { content: " • unsaved"; color: var(--accent, #c60); }
   #name { color: var(--muted); margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40ch; }
   main { position: relative; flex: 1; overflow: hidden; }
@@ -63,7 +91,30 @@
   svg.drawing .sel line, svg.drawing .sel path, svg.drawing .sel circle,
   svg.drawing .sel rect, svg.drawing .sel polygon:not(.fill) { stroke: #d9480f !important; }
   svg.drawing .sel text, svg.drawing .sel .fill { fill: #d9480f !important; }
+  svg.drawing circle.handle { fill: #fff !important; stroke: #d9480f !important; stroke-width: 1.5px; vector-effect: non-scaling-stroke; cursor: move; }
   svg.drawing.panning { cursor: grabbing; }
+  /* "merge with": what can be merged, what is picked (Ctrl+click), the item merged onto */
+  svg.drawing .mergecand line, svg.drawing .mergecand path, svg.drawing .mergecand circle,
+  svg.drawing .mergecand rect, svg.drawing .mergecand polygon:not(.fill) { stroke: #7048e8 !important; }
+  svg.drawing .mergecand text, svg.drawing .mergecand .fill { fill: #7048e8 !important; }
+  svg.drawing .mergepick line, svg.drawing .mergepick path, svg.drawing .mergepick circle,
+  svg.drawing .mergepick rect, svg.drawing .mergepick polygon:not(.fill) { stroke: #2b8a3e !important; }
+  svg.drawing .mergepick text, svg.drawing .mergepick .fill { fill: #2b8a3e !important; }
+  svg.drawing .mergehead line, svg.drawing .mergehead path, svg.drawing .mergehead circle,
+  svg.drawing .mergehead rect, svg.drawing .mergehead polygon:not(.fill) { stroke: #d9480f !important; }
+  svg.drawing .mergehead text, svg.drawing .mergehead .fill { fill: #d9480f !important; }
+  svg.drawing.merging, svg.drawing.merging * { cursor: crosshair !important; }
+  svg.drawing.merging .mergecand, svg.drawing.merging .mergecand * { cursor: pointer !important; }
+  #modeToast { position: fixed; z-index: 60; display: none; pointer-events: none; background: var(--ink); color: var(--panel);
+               border-radius: 6px; padding: 4px 9px; font-size: 13px; box-shadow: 0 4px 14px rgba(15, 20, 30, .25); opacity: 1; transition: opacity .25s; }
+  #modeToast.fade { opacity: 0; }
+  #mergeBar { position: fixed; z-index: 40; top: 84px; left: 50%; transform: translateX(-50%); background: var(--panel); border: 1px solid #7048e8;
+              border-radius: 8px; box-shadow: 0 6px 20px rgba(15, 20, 30, .18); padding: 6px 10px; font-size: 13px; display: flex; gap: 10px; align-items: center; max-width: calc(100vw - 32px); }
+  #mergeBar[hidden] { display: none; }
+  #mergeBar button { padding: 2px 8px; font-size: 12.5px; }
+  #annMembers { font-size: 12.5px; color: var(--muted); display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+  #annMembers[hidden] { display: none; }
+  #annMembers button { padding: 1px 6px; font-size: 12px; }
   dialog#annDlg { width: min(780px, calc(100vw - 32px)); padding: 0; border: 1px solid var(--line); border-radius: 10px;
                   background: var(--panel); color: var(--ink); box-shadow: 0 12px 40px rgba(0, 0, 0, .3); }
   dialog#annDlg::backdrop { background: rgba(15, 20, 30, .35); }
@@ -114,9 +165,42 @@
   svg.drawing .pick .pk-sel > path:not([fill-rule]) { stroke: rgba(217, 72, 15, .5); stroke-width: 8px; stroke-linecap: round; vector-effect: non-scaling-stroke; }
   svg.drawing .pick .pk-sel > circle { fill: rgba(217, 72, 15, .95); }
   svg.drawing .pick .pk-sel { display: inline; }
+  /* preview: the edited item's features (purple) and the selector at the cursor (green) */
+  svg.preview .pick.has-hl { display: inline; }
+  svg.preview .pick .pk { fill: none; stroke: none; pointer-events: none; }
+  svg.preview .pick .pk-rel > path[fill-rule] { fill: rgba(124, 58, 237, .18); }
+  svg.preview .pick .pk-rel > path:not([fill-rule]) { stroke: rgba(124, 58, 237, .6); stroke-width: 6px; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+  svg.preview .pick .pk-rel > circle { fill: rgba(124, 58, 237, .9); }
+  svg.preview .pick .pk-cur > path[fill-rule] { fill: rgba(22, 163, 74, .3); }
+  svg.preview .pick .pk-cur > path:not([fill-rule]) { stroke: rgba(22, 163, 74, .8); stroke-width: 7px; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+  svg.preview .pick .pk-cur > circle { fill: rgba(22, 163, 74, 1); }
+  #annHl { margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 55%; }
+  #annHl i { display: inline-block; width: .8em; height: .8em; border-radius: 2px; margin: 0 3px 0 8px; vertical-align: -1px; }
+  #annHl .rel { background: rgba(124, 58, 237, .7); }
+  #annHl .cur { background: rgba(22, 163, 74, .9); }
   #annEditor textarea.fallback { width: 100%; height: 100%; border: 0; resize: none; padding: 10px 14px;
                                  font: 13px/1.5 ui-monospace, monospace; background: var(--panel); color: var(--ink); }
   #annDlg .foot { display: flex; align-items: center; gap: 8px; padding: 10px 16px; }
+  #viewMenu { position: fixed; z-index: 50; background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+              box-shadow: 0 6px 20px rgba(15, 20, 30, .18); padding: 6px 8px; font-size: 12px; color: var(--muted); text-align: center; }
+  #viewMenu .ttl { color: var(--ink); font-weight: 600; margin-bottom: 4px; }
+  #viewMenu .pad { display: grid; grid-template-columns: repeat(3, 26px); grid-template-rows: repeat(3, 24px); gap: 2px; justify-content: center; }
+  #viewMenu .pad button { padding: 0; min-width: 0; font-size: 14px; line-height: 1; }
+  #viewMenu .pad button:disabled { opacity: .35; cursor: default; }
+  #viewMenu .why { margin-top: 4px; max-width: 160px; }
+  #viewMenu .sect { display: flex; align-items: center; justify-content: center; gap: 2px; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); color: var(--ink); cursor: pointer; }
+  #viewMenu .adddet { display: block; width: 100%; margin-top: 6px; font-size: 12px; padding: 3px 6px; }
+  #viewMenu .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 5px; color: var(--ink); text-align: left; }
+  #viewMenu .row input[type=checkbox] { width: auto; }
+  #viewMenu .sect + .sect { border-top: 0; padding-top: 0; margin-top: 3px; }
+  #viewMenu .row .rot { display: flex; gap: 2px; }
+  #viewMenu .row .rot button { padding: 1px 6px; min-width: 0; font-size: 13px; line-height: 1.1; }
+  #viewMenu .row input, #viewMenu .row select { width: 74px; font: inherit; padding: 2px 4px; }
+  #viewMenu .row[hidden] { display: none; }
+  #viewMenu .btns { display: flex; gap: 6px; justify-content: flex-end; margin-top: 8px; }
+  #viewMenu .btns button { padding: 2px 10px; font-size: 12px; }
+  #viewMenu .sect:has(input:disabled) { color: var(--muted); cursor: default; }
+  svg.drawing g.cut, svg.drawing g.dmark, svg.drawing g.vtitle { cursor: move; }
   #annArrows { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12.5px; }
   #annArrows[hidden] { display: none; }
   #annArrows .pad { display: grid; grid-template-columns: repeat(3, 22px); grid-template-rows: repeat(3, 18px); gap: 1px; }
@@ -153,6 +237,7 @@
   <span class="sep"></span>
   <button id="fit" disabled title="Fit sheet (F)">Fit</button>
   <button id="save" class="primary" disabled>Download SVG</button>
+  <button id="helpBtn" title="The drawing JSON reference, with examples (F1)">Help</button>
   <span id="name"></span>
 </header>
 <main id="main">
@@ -171,7 +256,7 @@
   <div id="annBody">
     <div id="annEditor"></div>
     <div id="annPreviewBox">
-      <div id="annPreviewHead"><strong>Preview</strong><span id="annPreviewMsg"></span></div>
+      <div id="annPreviewHead"><strong>Preview</strong><span id="annPreviewMsg"></span><span id="annHl"></span></div>
       <div id="annPreview"></div>
     </div>
   </div>
@@ -185,14 +270,27 @@
         <button data-dir="down" style="grid-area: 3 / 2">↓</button>
       </div>
     </div>
+    <span id="annMembers" hidden></span>
+    <button id="annMerge" hidden title="Merge another dimension, thread, GD&T frame or note on the same feature onto this one's leader">Merge with…</button>
     <span id="annMsg"></span>
+    <button id="annHelp" title="Help on this kind of entry, with examples (F1)">Help</button>
     <button id="annInsert" hidden title="Insert the selector of the geometry selected on the drawing at the cursor"></button>
     <button id="annCancel">Cancel</button>
     <button id="annApply" class="primary" title="Use the edit and re-render (Ctrl+Enter); Save writes it to the file">Apply</button>
   </div>
 </dialog>
+<dialog id="helpDlg" aria-label="Drawing JSON help">
+  <div class="hhead">
+    <strong>Drawing JSON</strong>
+    <select id="helpToc" title="Go to a section"></select>
+    <input id="helpFind" type="search" placeholder="Find…" title="Find text in the help (Enter: next)">
+    <button id="helpClose" title="Close (Esc)">✕</button>
+  </div>
+  <div id="helpBody"></div>
+</dialog>
+<div id="mergeBar" hidden><span id="mergeText"></span><button id="mergeDone" hidden>Merge</button><button id="mergeCancel">Cancel</button></div>
 <footer>
-  Pick a drawing, then drag annotations or views to move them; <kbd>Tab</kbd> cycles what can be selected (annotations, views, geometry). Aligned views slide only along their projection axis and follow their parent view. Edit the JSON and press Re-render (<kbd>R</kbd>) to update. <span class="long"><kbd>Shift</kbd>-drag a dimension to move only its line (text stays in place along it). Double-click resets one item, right-click an annotation or a view to edit its JSON (click the title block for it and the sheet size), <kbd>Del</kbd> deletes the selected one (<kbd>Ctrl</kbd>+<kbd>Z</kbd> brings it back). In Geometry mode click faces, edges and points to get their selector (<kbd>Ctrl</kbd>+click adds).
+  Pick a drawing, then drag annotations or views to move them; <kbd>Tab</kbd> cycles what can be selected (annotations, views, geometry). Aligned views slide only along their projection axis and follow their parent view. Edit the JSON and press Re-render (<kbd>R</kbd>) to update. <span class="long"><kbd>Shift</kbd>-drag a dimension to move only its line (text stays in place along it). A selected datum, or a leader ending in a dot, has a handle on its end at the part: drag it along the edge (past it onto an extension line) or across the face. Double-click resets one item, right-click an annotation to edit its JSON, or a view for arrows that add a projected view on that side and a Section view switch; in Views mode drag a section's arrows to move its cutting plane, or a detail's circle to move it (right-click a detail for its size and shape); drag a view's label (SECTION A-A) to move it relative to its view (click the title block for its JSON and the sheet size), in its JSON window <b>Merge with…</b> puts a thread, note, frame or dimension on the same feature onto its leader (click one, or <kbd>Ctrl</kbd>+click several), <kbd>Del</kbd> deletes the selected one (<kbd>Ctrl</kbd>+<kbd>Z</kbd> brings it back). In Geometry mode click faces, edges and points to get their selector (<kbd>Ctrl</kbd>+click adds).
   Arrow keys nudge the selection (<kbd>Shift</kbd> ×10). Drag the background to pan, scroll to zoom.</span>
 </footer>
 
@@ -245,7 +343,7 @@ const arrowOf = g => { const [l, w] = (g.dataset.arrow || "3,1").split(",").map(
 // ------------------------------------------------------------ annotation state
 // Each annotation keeps its offset from where stepdraw put it in data-
 // attributes, so an edited file can be opened and edited again.
-const STATE_KEYS = { linear: ["off", "slide"], angle: ["dr"], leader: ["dx", "dy"], ordinate: ["dx", "dy"], free: ["dx", "dy"] };
+const STATE_KEYS = { linear: ["off", "slide"], angle: ["dr"], leader: ["dx", "dy", "tx", "ty"], ordinate: ["dx", "dy"], free: ["dx", "dy"] };
 STATE_KEYS.view = ["dx", "dy"];
 const isView = g => g.classList.contains("view");
 const kindOf = g => isView(g) ? "view" : g.dataset.kind;
@@ -275,7 +373,7 @@ function dragged(g, s0, d, ev) {
       const bis = fromAngle(Math.atan2(da.y, da.x) + num(g.dataset.sweep) / 2);
       return { dr: s0.dr + dot(d, bis) };
     }
-    default: return { dx: s0.dx + d.x, dy: s0.dy + d.y };
+    default: return Object.assign({}, s0, { dx: s0.dx + d.x, dy: s0.dy + d.y });
   }
 }
 
@@ -380,12 +478,13 @@ function renderLeader(g) {
       return len(u) > 1e-9 ? add(c, mul(norm(u), r)) : tip0;
     }
     if (mode === "edge") {
+      // the handle slides the end along the edge's line (tx mm), past its ends if wanted
       const e0 = pt(ds.e0), e1 = pt(ds.e1), e = sub(e1, e0), l2 = dot(e, e);
       if (l2 < 1e-12) return tip0;
-      const f = Math.min(1, Math.max(0, dot(sub(knee, e0), e) / l2));
+      const f = Math.min(1, Math.max(0, dot(sub(knee, e0), e) / l2)) + num(ds.tx) / Math.sqrt(l2);
       return add(e0, mul(e, f));
     }
-    return tip0;
+    return add(tip0, V(num(ds.tx), num(ds.ty)));   // on a face: moved freely with the handle
   };
   // the shoulder comes out of the side of the symbol facing the feature
   const side0 = Math.sign(tip0.x - pt(ds.sc).x);
@@ -396,7 +495,17 @@ function renderLeader(g) {
     tip = tipFor(s1);
   }
   const knee = s1;
+  if (handle && handle._for === g) placeHandle(g, tip);
   const lead = clear(part(g, "lead"));
+  if (mode === "edge" && !ds.radius) {
+    // the end pulled past the edge: an extension line from the edge to just beyond it
+    const e0 = pt(ds.e0), e1 = pt(ds.e1), e = sub(e1, e0), L = len(e);
+    if (L > 1e-9) {
+      const u = mul(e, 1 / L), t = dot(sub(tip, e0), u);
+      if (t < -0.01) lead.appendChild(line(e0, add(tip, mul(u, -1.5))));
+      else if (t > L + 0.01) lead.appendChild(line(e1, add(tip, mul(u, 1.5))));
+    }
+  }
   lead.appendChild(line(s0, s1));
   if (ds.around) lead.appendChild(el("circle", { class: "thin", cx: r3(knee.x), cy: r3(knee.y), r: ds.around }));   // all around
   const u = norm(sub(knee, tip));
@@ -524,7 +633,30 @@ function select(g, hl = g) {
   if (selectedHl) selectedHl.classList.remove("sel");
   selected = g; selectedHl = g ? hl : null;
   if (selectedHl) selectedHl.classList.add("sel");
+  updateHandle();
   refreshButtons();
+}
+/** A selected leader that doesn't end in an arrow (datum triangle, dot on a face,
+ *  target cross) gets a handle on its end at the part (in annotation mode). */
+const tipMovable = g => !isView(g) && kindOf(g) === "leader" && g.dataset.term !== "arrow" && !g.dataset.radius && (g.dataset.mode === "edge" || g.dataset.mode === "fixed");
+let handle = null;     // the handle, in an overlay above the whole drawing so nothing covers it
+/** Put the handle at `p`, a point in `g`'s coordinates. */
+function placeHandle(g, p) {
+  const m = svg.getScreenCTM().inverse().multiply(g.getScreenCTM());
+  const q = new DOMPoint(p.x, p.y).matrixTransform(m);
+  handle.setAttribute("cx", r3(q.x)); handle.setAttribute("cy", r3(q.y));
+}
+function updateHandle() {
+  if (svg) svg.querySelectorAll(".handle, g.handles").forEach(h => h.remove());
+  handle = null;
+  if (!selected || !tipMovable(selected) || $("mode").value !== "ann") return;
+  const layer = svg.appendChild(el("g", { class: "handles" }));
+  const h = layer.appendChild(el("circle", { class: "handle", r: 1.2 }));
+  h._for = selected;
+  handle = h;
+  h.appendChild(el("title", {})).textContent = selected.dataset.mode === "edge"
+    ? "Drag to slide the end along the edge (past it, onto an extension line)" : "Drag to move the end on the face";
+  render(selected);
 }
 let hovered = null;
 function hover(hl) {
@@ -537,22 +669,25 @@ function hover(hl) {
 function refreshButtons() {
   $("undo").disabled = !undoStack.length && !deleted.length;
   $("redo").disabled = !redoStack.length;
-  $("reset").disabled = !selected;
+  $("reset").disabled = !selected || isCut(selected);
 }
 const same = (a, b) => Object.keys(a).every(k => Math.abs(a[k] - b[k]) < 1e-6);
 function commit(changes) {            // changes: [{g, before, after}]
   changes = changes.filter(c => !same(c.before, c.after));
   if (!changes.length) return;
+  if (changes.some(c => isView(c.g))) scheduleViewRecord();
   undoStack.push(changes); redoStack = [];
   refreshButtons();
 }
 function undo() {
   const c = undoStack.pop(); if (!c) return;
   c.forEach(x => setState(x.g, x.before)); redoStack.push(c); refreshButtons();
+  if (c.some(x => isView(x.g))) scheduleViewRecord();
 }
 function redo() {
   const c = redoStack.pop(); if (!c) return;
   c.forEach(x => setState(x.g, x.after)); undoStack.push(c); refreshButtons();
+  if (c.some(x => isView(x.g))) scheduleViewRecord();
 }
 const zero = g => Object.fromEntries(keysOf(g).map(k => [k, 0]));
 function reset(gs) {
@@ -609,6 +744,8 @@ function pick(e) {
   if (mode === "ann") {
     const a = annAt(e);
     if (a) return { g: a, hl: a };
+    const t = titleAt(e);
+    if (t) return { g: t, hl: t, cut: true };
   }
   // geometry mode picks single faces, edges and points, never whole views
   if (mode === "geom") {
@@ -616,8 +753,55 @@ function pick(e) {
     if (ent) return { g: null, hl: ent.el, ent };
   }
   if (mode === "view") {
+    // a section's cutting-plane symbol before the view it is on
+    const c = titleAt(e) || cutAt(e) || markAt(e);
+    if (c) return { g: c, hl: c, cut: true };
     const v = viewAt(e);
     if (v) return { g: v, hl: v };
+  }
+  return null;
+}
+const isCut = g => !!g && (g.classList.contains("cut") || g.classList.contains("dmark") || g.classList.contains("vtitle"));
+const isTitle = g => !!g && g.classList.contains("vtitle");
+/** A view's label ("SECTION A-A", "DETAIL D (2:1)") under the pointer. */
+function titleAt(e) {
+  const hit = e.target instanceof Element && e.target.closest("g.vtitle");
+  if (hit && svg.contains(hit)) return hit;
+  for (const g of svg.querySelectorAll("g.vtitle")) {
+    const b = g.getBoundingClientRect(), q = 3;
+    if (e.clientX >= b.left - q && e.clientX <= b.right + q && e.clientY >= b.top - q && e.clientY <= b.bottom + q) return g;
+  }
+  return null;
+}
+/** The detail circle / ellipse (with its letter) under the pointer: near its outline or on its letter. */
+function markAt(e) {
+  const hit = e.target instanceof Element && e.target.closest("g.dmark");
+  if (hit && svg.contains(hit)) return hit;
+  for (const g of svg.querySelectorAll("g.dmark")) {
+    const t = g.querySelector("text"), o = g.querySelector("circle, polygon, polyline, path");
+    if (t) { const b = t.getBoundingClientRect(), q = 4; if (e.clientX >= b.left - q && e.clientX <= b.right + q && e.clientY >= b.top - q && e.clientY <= b.bottom + q) return g; }
+    if (o && o.isPointInStroke) {
+      // within a few pixels of the outline
+      const m = o.getScreenCTM().inverse(), px = 1 / Math.hypot(m.a, m.b);
+      const sw = o.style.strokeWidth;
+      o.style.strokeWidth = (8 / px) + "px";
+      const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(m);
+      const on = o.isPointInStroke(p);
+      o.style.strokeWidth = sw;
+      if (on) return g;
+    }
+  }
+  return null;
+}
+/** The cutting-plane symbol (line, arrows, letters) under the pointer, with a few pixels of slack. */
+function cutAt(e) {
+  const hit = e.target instanceof Element && e.target.closest("g.cut");
+  if (hit && svg.contains(hit)) return hit;
+  for (const g of svg.querySelectorAll("g.cut")) {
+    if ([...g.querySelectorAll("line, polygon, text")].some(s => {
+      const b = s.getBoundingClientRect(), q = 4;
+      return e.clientX >= b.left - q && e.clientX <= b.right + q && e.clientY >= b.top - q && e.clientY <= b.bottom + q;
+    })) return g;
   }
   return null;
 }
@@ -631,6 +815,24 @@ stage.addEventListener("pointerdown", e => {
   if (!svg || e.button > 1) return;
   const hit = e.button === 0 ? pick(e) : null;
   stage.setPointerCapture(e.pointerId);
+  const hd = e.button === 0 && e.target instanceof Element ? e.target.closest(".handle") : null;
+  if (hd && selected && hd._for === selected) {
+    // the leader's end at the part: along the edge, or anywhere on the face
+    const g = selected, pos = ev => local(g, ev);
+    const u = g.dataset.mode === "edge" ? norm(sub(pt(g.dataset.e1), pt(g.dataset.e0))) : null;
+    drag = { g, pos, start: pos(e), s0: getState(g), tip: true, u, moved: true };
+    e.preventDefault();
+    return;
+  }
+  if (hit && hit.cut) {
+    // a cutting plane: dragged square to itself, which moves the section
+    const g = hit.g, par = g.parentNode;
+    const pos = ev => { const q = new DOMPoint(ev.clientX, ev.clientY).matrixTransform(par.getScreenCTM().inverse()); return V(q.x, q.y); };
+    select(g);
+    drag = { cut: g, pos, start: pos(e), n: g.classList.contains("cut") && !isTitle(g) ? pt(g.dataset.n) : null, x: e.clientX, y: e.clientY, moved: false, t: 0, d: V(0, 0) };
+    e.preventDefault();
+    return;
+  }
   if (hit && !hit.g) {
     // geometry mode: a click on a face / edge / point selects it, a drag pans
     drag = { pan: true, x: e.clientX, y: e.clientY, vb: vb.slice(), ent: hit.ent, add: e.ctrlKey || e.metaKey, moved: false };
@@ -669,6 +871,31 @@ stage.addEventListener("pointermove", e => {
     setVB([drag.vb[0] - (e.clientX - drag.x) * sx, drag.vb[1] - (e.clientY - drag.y) * sx, vb[2], vb[3]]);
     return;
   }
+  if (drag.cut) {
+    if (!drag.moved) {
+      if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 4) return;
+      drag.moved = true;
+    }
+    if (!drag.n) {
+      // a detail circle: anywhere
+      const d = sub(drag.pos(e), drag.start);
+      drag.d = d;
+      drag.cut.setAttribute("transform", `translate(${r3(d.x)} ${r3(d.y)})`);
+      setStatus(isTitle(drag.cut) ? "Moving the view's label (re-rendered when you let go)" : `Detail ${drag.cut.dataset.label}: moved (re-rendered when you let go)`);
+      return;
+    }
+    const t = dot(sub(drag.pos(e), drag.start), drag.n);
+    drag.t = t;
+    drag.cut.setAttribute("transform", `translate(${r3(drag.n.x * t)} ${r3(drag.n.y * t)})`);
+    const mm = t / (+drag.cut.dataset.scale || 1);
+    setStatus(`Section ${drag.cut.dataset.label}: cutting plane moved ${mm >= 0 ? "+" : ""}${mm.toFixed(2)} mm (re-rendered when you let go)`);
+    return;
+  }
+  if (drag.tip) {
+    const d = sub(drag.pos(e), drag.start);
+    setState(drag.g, Object.assign({}, drag.s0, drag.u ? { tx: drag.s0.tx + dot(d, drag.u) } : { tx: drag.s0.tx + d.x, ty: drag.s0.ty + d.y }));
+    return;
+  }
   if (!drag.moved) {
     if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 4) return;
     drag.moved = true;
@@ -678,6 +905,13 @@ stage.addEventListener("pointermove", e => {
   setState(drag.g, dragged(drag.g, drag.s0, d, e));
 });
 function endDrag() {
+  if (drag && drag.cut) {
+    const d = drag; drag = null;
+    if (!d.n) { if (d.moved && Math.hypot(d.d.x, d.d.y) > 1e-3) (isTitle(d.cut) ? moveTitle : moveMark)(d.cut, d.d); else d.cut.removeAttribute("transform"); return; }
+    if (d.moved && Math.abs(d.t) > 1e-3) moveCut(d.cut, d.t);
+    else d.cut.removeAttribute("transform");
+    return;
+  }
   if (drag && drag.ent && !drag.moved) togglePick(drag.ent, drag.add);
   else if (drag && drag.title && !drag.moved) openTitleEditor();     // a click on the title block
   else if (drag && drag.g) commit([{ g: drag.g, before: drag.s0, after: getState(drag.g) }]);
@@ -686,7 +920,7 @@ function endDrag() {
 }
 stage.addEventListener("pointerup", endDrag);
 stage.addEventListener("pointercancel", endDrag);
-stage.addEventListener("dblclick", e => { const h = svg && pick(e); if (h && h.g) { select(h.g, h.hl); reset([h.g]); } });
+stage.addEventListener("dblclick", e => { const h = svg && pick(e); if (h && isTitle(h.g)) { resetTitle(h.g); return; } if (h && h.g && isView(h.g) && unplaceView(h.g)) return; if (h && h.g && !h.cut) { select(h.g, h.hl); reset([h.g]); } });
 stage.addEventListener("pointerleave", () => { hover(null); pickHover(null); });
 
 // ------------------------------------------------------------ picked geometry
@@ -780,11 +1014,17 @@ function renderSelPanel() {
   // new annotations on the selection
   const add = document.createElement("div");
   add.className = "row add";
-  for (const [key, label] of [["dimensions", "Add dimension"], ["gdt", "Add GD&T"], ["datums", "Add datum"], ["notes", "Add note"]]) {
+  for (const [key, label] of [["dimensions", "Add dimension"], ["gdt", "Add GD&T"], ["datums", "Add datum"], ["notes", "Add note"], ["threads", "Add thread"]]) {
     const b = document.createElement("button");
     b.textContent = label;
-    b.title = `Open the JSON editor with a new ${KIND_TITLES[key].toLowerCase()} for the selected geometry`;
+    b.title = key === "dimensions" ? "Add a dimension for the selected geometry (the JSON editor opens only if it can't be drawn)"
+      : `Open the JSON editor with a new ${KIND_TITLES[key].toLowerCase()} for the selected geometry`;
     b.disabled = !specText || addBusy;
+    if (key === "threads" && !threadable()) {
+      // threads go on straight lines: a hole / shaft seen side-on, or a straight edge of one
+      b.disabled = true;
+      b.title = "A thread is added on straight lines: pick a hole or shaft seen from the side (its cylinder) or a straight edge of it, not a circle or a flat face";
+    }
     b.onclick = () => addAnnotation(key);
     add.appendChild(b);
   }
@@ -929,16 +1169,63 @@ function nextDatum(spec) {
   for (const c of "ABCDEFGHJKLMNPRSTUVWXYZ") if (!used.has(c)) return c;
   return "AA";
 }
+/** A thread for the picked hole / shaft: metric size from the tap drill (hole) or the diameter (shaft). */
+async function guessThread(fs) {
+  const f = fs.find(f => f.round || /^CONE/.test(f.info)) || fs[0];
+  const of = await selectorOf(f.p.kind, [f.p.id]);
+  const d = parseFloat(f.size);
+  // [size, coarse pitch]; tap drill = size - pitch
+  const M = [[1.6, .35], [2, .4], [2.5, .45], [3, .5], [4, .7], [5, .8], [6, 1], [8, 1.25], [10, 1.5], [12, 1.75], [14, 2], [16, 2], [18, 2.5], [20, 2.5], [22, 2.5], [24, 3], [27, 3], [30, 3.5], [36, 4], [42, 4.5], [48, 5]];
+  let size = null;
+  if (d > 0) {
+    const tap = M.find(([D, P]) => Math.abs(D - P - d) < 0.16);
+    const nom = M.find(([D]) => Math.abs(D - d) < 0.05);
+    size = tap ? tap[0] : nom ? nom[0] : null;
+  }
+  const t = { of, size: size ? "M" + size : "M6", all_alike: true };
+  if (!size) t.size = "M" + (d ? Math.round(d) : 6);
+  return t;
+}
 async function guessNote(fs) {
   const attach = await selectorOfAll(fs);
   const n = fs.filter(f => f.p.kind === fs[0].p.kind).length;
   const text = sameRound(fs) && fs[0].size ? (n > 1 ? `${n}X ` : "") + `Ø${fs[0].size} THRU` : "NOTE";
   return { text, attach };
 }
-let addBusy = false;
+let addBusy = false, lastWarnings = [];
+/** Is everything picked a straight line a thread can go on: a cylinder / cone seen
+ *  side-on (the pick layer has no end-on ones) or a straight edge? */
+function threadable() {
+  const list = [...picks.values()];
+  return list.length > 0 && list.every(p => (p.kind === "faces" && /^(CYLINDER|CONE)/.test(p.info || "")) || (p.kind === "edges" && /^LINE/.test(p.info || "")));
+}
+/** Add a new dimension straight away; the JSON editor opens only when it can't be drawn. */
+async function addDimensionDirect(view, val, spec) {
+  const arr = view.dataset.src + "/dimensions";
+  const list = getPtr(spec, arr);
+  const ptr = arr + "/" + (Array.isArray(list) ? list.length : 0);
+  let next;
+  try { next = appendSpec(specText, arr, val); } catch (e) { return `could not add it to the JSON (${e.message})`; }
+  // try it first: is the new dimension drawn?
+  setStatus("Adding the dimension…");
+  let out;
+  try {
+    const body = source.path ? { path: source.path, json: next } : { json: next, name: source.name };
+    out = await (await fetch("/api/render", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).json();
+  } catch (e) { return "stepdraw is not reachable"; }
+  if (out.error) return out.error;
+  if (!out.svg.includes(`data-src="${ptr}"`)) {
+    const fresh = (out.warnings || []).filter(w => !lastWarnings.includes(w));
+    return fresh.length ? fresh.join("; ") : "the dimension could not be drawn";
+  }
+  await writeSpec(next, "new dimension", `Added ${entryName(ptr, val)} to view '${view.id}'`);
+  setStatus(`Added ${entryName(ptr, val)} to view '${view.id}' (Ctrl+Z removes it; in Annotations mode drag it to place it, right-click to edit it)`);
+  return null;
+}
 /** Open the editor with a new `key` entry ("dimensions", "gdt", ...) for the picked geometry. */
 async function addAnnotation(key) {
   if (!picks.size || !specText || addBusy) return;
+  if (key === "threads" && !threadable()) { setStatus("A thread is added on straight lines: pick a hole or shaft seen from the side", true); return; }
   let spec;
   try { spec = JSON.parse(specText); } catch (e) { setStatus("The drawing JSON could not be read", true); return; }
   const list = [...picks.values()];
@@ -951,9 +1238,16 @@ async function addAnnotation(key) {
     const val = key === "dimensions" ? await guessDimension(fs)
       : key === "gdt" ? await guessGdt(fs, spec)
       : key === "datums" ? { label: nextDatum(spec), attach: await selectorOfAll(fs) }
+      : key === "threads" ? await guessThread(fs)
       : await guessNote(fs);
     setStatus("");
     const vname = view.id;
+    if (key === "dimensions") {
+      const problem = await addDimensionDirect(view, val, spec);
+      if (!problem) return;
+      await openNewAnnEditor(view.dataset.src + "/" + key, key, val, spec, `The dimension couldn't be added as it is: ${problem}. Fix it here; Apply adds it`);
+      return;
+    }
     await openNewAnnEditor(view.dataset.src + "/" + key, key, val, spec, `New entry in view '${vname}'; Apply adds it, Save writes the file`);
   } catch (e) {
     setStatus("Could not make the annotation: " + e.message, true);
@@ -970,6 +1264,25 @@ function cycleMode(step) {
   const m = $("mode"), n = m.options.length;
   m.selectedIndex = (m.selectedIndex + step + n) % n;
   modeChanged();
+  modeToast(m.options[m.selectedIndex].textContent);
+}
+// where the pointer last was, for the Tab popup
+let lastPointer = null;
+addEventListener("pointermove", e => { lastPointer = { x: e.clientX, y: e.clientY }; }, { passive: true });
+let toastTimer = 0;
+/** A brief popup by the pointer naming the selection mode Tab switched to. */
+function modeToast(text) {
+  let t = $("modeToast");
+  if (!t) { t = document.body.appendChild(document.createElement("div")); t.id = "modeToast"; }
+  t.textContent = "Select: " + text;
+  const p = lastPointer || { x: innerWidth / 2, y: innerHeight / 2 };
+  t.classList.remove("fade");
+  t.style.display = "block";
+  const r = t.getBoundingClientRect();
+  t.style.left = Math.max(4, Math.min(p.x + 14, innerWidth - r.width - 4)) + "px";
+  t.style.top = Math.max(4, Math.min(p.y + 16, innerHeight - r.height - 4)) + "px";
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.classList.add("fade"); toastTimer = setTimeout(() => { t.style.display = "none"; }, 250); }, 900);
 }
 function modeChanged() {
   hover(null);
@@ -986,7 +1299,7 @@ function modeChanged() {
 $("mode").addEventListener("change", () => { modeChanged(); $("mode").blur(); });
 document.addEventListener("keydown", e => {
   if (e.key !== "Tab" || e.ctrlKey || e.metaKey || e.altKey || $("annDlg").open) return;
-  if (e.target instanceof Element && e.target.closest("input[type=text], textarea")) return;
+  if (e.target instanceof Element && e.target.closest("input[type=text], input[type=search], textarea, #helpDlg")) return;
   e.preventDefault();
   if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
   cycleMode(e.shiftKey ? -1 : 1);
@@ -1002,6 +1315,7 @@ document.addEventListener("keydown", e => {
   if (e.key === "f" || e.key === "F") { fit(); return; }
   if ((e.key === "r" || e.key === "R") && !mod && source) { renderDrawing(source, true); return; }
   const dirs = { ArrowLeft: V(-1, 0), ArrowRight: V(1, 0), ArrowUp: V(0, -1), ArrowDown: V(0, 1) };
+  if (selected && dirs[e.key] && isCut(selected)) { e.preventDefault(); setStatus("Drag it with the mouse to move it", true); return; }
   if (selected && dirs[e.key]) {
     e.preventDefault();
     const s0 = getState(selected);
@@ -1041,6 +1355,7 @@ $("warnBtn").onclick = () => { $("warnings").hidden = !$("warnings").hidden; };
 
 async function renderDrawing(src, keepMoves) {
   if (busy) return;
+  cancelMerge();
   busy = true;
   setStatus("Rendering…");
   try {
@@ -1057,13 +1372,15 @@ async function renderDrawing(src, keepMoves) {
     const keep = keepMoves && svg ? {
       anns: [...svg.querySelectorAll("g.ann")].map(g => ({ kind: g.dataset.kind, src: g.dataset.src, s: getState(g) })),
       remap: takeRemap(),
-      views: Object.fromEntries([...svg.querySelectorAll(":scope > g.view")].map(g => [g.id, getState(g)])),
+      // views whose move was just written to the JSON start from where it puts them
+      views: Object.fromEntries([...svg.querySelectorAll(":scope > g.view")].filter(g => !(dropViewMoves && dropViewMoves.has(g.id))).map(g => [g.id, getState(g)])),
     } : null;
     const hadMoves = keep && keep.anns.some(k => Object.values(k.s).some(v => v));
     const view = keepMoves && vb ? vb.slice() : null;
     const kept = load(out.svg, out.name, keep);
     specText = out.spec || null;
     selCache.clear();
+    resolveCache.clear();
     // text read from a file is the saved state; unsaved edits (src.json) keep the old one
     if ((src.path && !src.json) || src.file) savedText = specText;
     if (view) setVB(view);
@@ -1071,6 +1388,7 @@ async function renderDrawing(src, keepMoves) {
     updateDirty();
     $("rerender").disabled = false;
     showWarnings(out.warnings || []);
+    lastWarnings = out.warnings || [];
     setStatus(hadMoves && !kept ? "Re-rendered; the annotations changed, so their moves were reset (view moves kept)" : "");
   } catch (e) {
     setStatus("Could not reach stepdraw. Is `stepdraw serve` still running?", true);
@@ -1195,7 +1513,7 @@ function appendSpec(text, arrPtr, val) {
 }
 
 const KIND_TITLES = { dimensions: "Dimension", gdt: "GD&T frame", datums: "Datum", datum_targets: "Datum target", notes: "Note",
-  views: "View", projected: "Projected view", sections: "Section view", details: "Detail view", title: "Title block" };
+  threads: "Thread", views: "View", projected: "Projected view", sections: "Section view", details: "Detail view", title: "Title block" };
 const SELECTOR_KEYS = new Set(["from", "to", "of", "origin", "attach", "through", "center"]);
 /** Selectors used anywhere in the drawing, offered as completions. */
 function drawingSelectors(spec) {
@@ -1208,11 +1526,11 @@ function drawingSelectors(spec) {
   return [...out].sort();
 }
 function schemaFor(kind, spec) {
-  const common = ['faces(">X")', 'faces("<X")', 'faces(">Y")', 'faces("<Y")', 'faces(">Z")', 'faces("<Z")',
-    'faces("%CYLINDER")', 'faces("%CYLINDER").faces("<X")', 'faces("%PLANE").faces("+Z")', 'faces(">Z[1]")',
-    'edges("|Z")', 'edges("%CIRCLE")', 'vertices("<X and <Y")'];
+  const common = ["faces('>X')", "faces('<X')", "faces('>Y')", "faces('<Y')", "faces('>Z')", "faces('<Z')",
+    "faces('%CYLINDER')", "faces('%CYLINDER').faces('<X')", "faces('%PLANE').faces('+Z')", "faces('>Z[1]')",
+    "edges('|Z')", "edges('%CIRCLE')", "vertices('<X and <Y')"];
   const examples = [...new Set([...selectionSelectors(), ...drawingSelectors(spec), ...common])];
-  const sel = d => ({ type: "string", description: d + "\n\nCadQuery selector: faces / edges / vertices chained, e.g. faces(\"%CYLINDER\").faces(\"<X[1]\"). " +
+  const sel = d => ({ type: "string", description: d + "\n\nCadQuery selector: faces / edges / vertices chained, e.g. faces('%CYLINDER').faces('<X[1]'). " +
     ">X <Y >(1,1,0) max/min centre, >Z[1] n-th group, |Z parallel, #Z perpendicular, +Z / -Z normal, %PLANE %CYLINDER %CONE %SPHERE %TORUS %LINE %CIRCLE, and / or / not.", examples });
   const datumRef = { type: "string", description: "Datum reference, with modifiers in brackets: \"A\", \"B(M)\", \"A-B(L)\".",
     examples: ["A", "B", "C", "A(M)", "B(M)", "A-B", "A(L)"] };
@@ -1230,7 +1548,8 @@ function schemaFor(kind, spec) {
       tolerance: { type: ["number", "string"], description: "Tolerance value (number) or text." },
       diameter: { type: "boolean", description: "Prefix the tolerance with Ø (cylindrical zone)." },
       datum: { type: "string", description: "Datum feature symbol attached to the frame (hangs below it, or off the far side on a dimension).", examples: ["A", "B", "C"] },
-      id: { type: "string", description: "Name datum symbols can refer to with \"gdt\": \"<id>\"." },
+      id: { type: "string", description: "Name datum symbols can refer to with \"gdt\": \"<id>\" (and merged items with \"merge\")." },
+      merge: { type: "string", description: "Merged onto the leader of the dimension, frame, note or thread with this \"id\" (use Merge with… in the editor)." },
       all_around: { type: "boolean", description: "All around: a circle on the leader's bend; the tolerance applies all around the profile in this view. Frames on a leader only (not on a dimension)." },
       modifier: { anyOf: [modifier, { type: "array", items: modifier }], description: "Modifiers after the tolerance: a string (\"M\", or space-separated) or a list." },
       datums: { type: "array", items: datumRef, description: "Datum references, primary first." },
@@ -1278,7 +1597,7 @@ function schemaFor(kind, spec) {
         suffix: { type: "string", description: "Text after the value." },
         decimals: { type: "integer", minimum: 0, maximum: 6, description: "Decimal places (default from config.json)." },
         tolerance: tol,
-        id: { type: "string", description: "Name that GD&T frames and datums can refer to with \"dimension\"." },
+        id: { type: "string", description: "Name that GD&T frames and datums can refer to with \"dimension\", and merged threads, notes and frames with \"merge\"." },
         gdt: { type: "array", items: frame(false), description: "Feature control frames attached to this dimension." },
         datum: { type: "string", description: "Datum feature symbol attached to this dimension (feature of size).", examples: ["A", "B", "C", "D", "E"] },
       },
@@ -1310,12 +1629,30 @@ function schemaFor(kind, spec) {
         point: { type: "array", items: { type: "number" }, minItems: 3, maxItems: 3, description: "Exact location in model coordinates [x, y, z]." },
       },
     },
+    threads: {
+      type: "object", additionalProperties: false, required: ["of"],
+      properties: {
+        of: sel("The threaded hole or shaft: its cylindrical face (or a circular edge of it)."),
+        size: { type: "string", description: "Metric designation: \"M6\" (coarse pitch) or \"M10x1.25\". Sets the major diameter and pitch.", examples: ["M3", "M4", "M5", "M6", "M8", "M10", "M12", "M16", "M20", "M10x1.25", "M12x1.5"] },
+        major: { type: "number", exclusiveMinimum: 0, description: "Major diameter (mm), when there is no metric size." },
+        pitch: { type: "number", exclusiveMinimum: 0, description: "Pitch (mm); default the ISO coarse pitch." },
+        depth: { type: "number", exclusiveMinimum: 0, description: "Thread length from the open end (default: the whole hole / shaft). Through holes start at the end highest in the model." },
+        all_alike: { type: "boolean", description: "Also every alike hole / shaft (same diameter, length and direction); the callout gets nX." },
+        callout: { type: "boolean", description: "Leader note with the designation, e.g. 2X M6 x 8 DEEP (default true)." },
+        text: { type: "string", description: "Callout text instead of the automatic one." },
+        kind: { enum: ["internal", "external"], description: "Default: internal for a hole, external for a shaft." },
+        id: { type: "string", description: "Name other items can be merged onto with \"merge\"." },
+        merge: { type: "string", description: "Merged onto the leader of the dimension, frame, note or thread with this \"id\" (use Merge with… in the editor)." },
+      },
+    },
     notes: {
       type: "object", additionalProperties: false, required: ["text"],
       properties: {
         text: { type: "string", description: "Note text (\\n for a new line)." },
         attach: sel("Feature the note's leader points to (omit for a free note)."),
         boxed: { type: "boolean", description: "Draw a box round the note (default true)." },
+        id: { type: "string", description: "Name other items can be merged onto with \"merge\"." },
+        merge: { type: "string", description: "Merged onto the leader of the dimension, frame, note or thread with this \"id\" (use Merge with… in the editor)." },
       },
     },
   };
@@ -1324,21 +1661,26 @@ function schemaFor(kind, spec) {
   const ann = {
     dimensions: list("dimensions", "Dimensions in this view."), gdt: list("gdt", "Feature control frames."),
     datums: list("datums", "Datum feature symbols."), datum_targets: list("datum_targets", "Datum targets."), notes: list("notes", "Notes."),
+    threads: list("threads", "Cosmetic threads on holes and shafts."),
   };
   const vec3 = d => ({ type: "array", items: { type: "number" }, minItems: 3, maxItems: 3, description: d });
-  const hidden = { type: "boolean", description: "Draw hidden lines (default from config.json)." };
+  const hidden = { type: "boolean", description: "Draw hidden lines (default false, from config.json)." };
   schemas.details = {
-    type: "object", additionalProperties: false, required: ["label", "radius"],
+    type: "object", additionalProperties: false, required: ["label"],
     properties: Object.assign({
       label: { type: "string", description: "Detail letter: \"D\" gives DETAIL D (2:1)." },
       name: { type: "string", description: "View name (default detail_<label>)." },
       center: sel("Centre of the detail (its reference point)."),
       point: vec3("Centre of the detail as a model point [x, y, z]."),
-      radius: { type: "number", exclusiveMinimum: 0, description: "Radius of the detail circle in model mm." },
+      radius: { type: "number", exclusiveMinimum: 0, description: "Radius of the detail circle in model mm (an ellipse: the semi-axis along angle). Default about an eighth of the part." },
+      shape: { enum: ["circle", "ellipse"], description: "Boundary shape (default circle). Right-click the detail to change it." },
+      radius2: { type: "number", exclusiveMinimum: 0, description: "Ellipse: the other semi-axis in model mm (default 0.6 x radius)." },
+      angle: { type: "number", description: "Ellipse: angle of the radius axis on the sheet, degrees anticlockwise from horizontal." },
       scale: { type: "number", exclusiveMinimum: 0, description: "Scale of the detail view (default twice the parent's)." },
       location: { type: "array", items: { type: "number" }, description: "Sheet position [x, y] of the detail centre, mm from bottom-left (default: nearest free space)." },
       hidden_lines: hidden,
       border: { type: "boolean", description: "Draw the detail circle as the view's boundary (default true)." },
+      title_offset: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2, description: "Move of the view's label from its place under the view [x, y] (sheet mm); set when you drag the label." },
     }, ann),
   };
   schemas.sections = {
@@ -1347,12 +1689,15 @@ function schemaFor(kind, spec) {
       label: { type: "string", description: "Section letter: \"A\" gives SECTION A-A." },
       name: { type: "string", description: "View name (default section_<label>)." },
       position: { enum: ["right", "left", "top", "bottom", "rear"], description: "Side of the parent the section is looked at from; the cutting plane is square to it." },
+      distance: { type: "number", description: "Distance (sheet mm) from the parent view's centre along the projection axis; set when you move the view. Default: next to the parent." },
       through: sel("The cutting plane passes through this feature."),
-      point: vec3("The cutting plane passes through this model point [x, y, z]."),
+      point: vec3("The cutting plane passes through this model point [x, y, z] (dragging the section arrows in View mode sets it). Without through / point: the centre of the part."),
       hidden_lines: { type: "boolean", description: "Hidden lines behind the cut (default false)." },
       hatch_angle: { type: "number", description: "Hatch angle in degrees." },
       hatch_spacing: { type: "number", description: "Hatch spacing in mm." },
+      title_offset: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2, description: "Move of the view's label from its place under the view [x, y] (sheet mm); set when you drag the label." },
       details: { type: "array", items: schemas.details, description: "Detail views of this section." },
+      projected: { type: "array", items: { $ref: "#/definitions/projected" }, description: "Views projected from this section (whole, not cut), aligned with it." },
     }, ann),
   };
   schemas.projected = {
@@ -1360,6 +1705,7 @@ function schemaFor(kind, spec) {
     properties: Object.assign({
       name: { type: "string", description: "View name (default <parent>_<position>)." },
       position: { enum: ["top", "bottom", "left", "right", "rear"], description: "Side of the parent view it is looked at from." },
+      distance: { type: "number", description: "Distance (sheet mm) from the parent view's centre along the projection axis; set when you move the view. Default: next to the parent." },
       hidden_lines: hidden,
       projected: { type: "array", items: { $ref: "#/definitions/projected" }, description: "Views projected from this one (the arrow buttons add them)." },
       sections: { type: "array", items: schemas.sections, description: "Section views of this view." },
@@ -1385,6 +1731,8 @@ function schemaFor(kind, spec) {
     properties: {
       drawing_number: { type: "string", description: "Drawing number (large text)." },
       revision: { type: "string", description: "Revision." },
+      issue: { type: "string", description: "Issue (shown beside the revision)." },
+      general_tolerances: { type: "string", description: "Text of the general tolerances box (default: UNLESS STATED:  X.X ±0.4    X.XX ±0.15    ANGLES ±0.5°).", examples: ["UNLESS STATED:  X.X ±0.4    X.XX ±0.15    ANGLES ±0.5°"] },
       description: { type: "string", description: "Part description." },
       material: { type: "string", description: "Material." },
       finish: { type: "string", description: "Finish." },
@@ -1394,7 +1742,7 @@ function schemaFor(kind, spec) {
     },
   };
   // projected views nest: they refer to themselves through a definition
-  if (kind === "views" || kind === "projected") return Object.assign({}, schemas[kind], { definitions: { projected: schemas.projected } });
+  if (kind === "views" || kind === "projected" || kind === "sections") return Object.assign({}, schemas[kind], { definitions: { projected: schemas.projected } });
   return schemas[kind];
 }
 
@@ -1427,6 +1775,7 @@ let editing = null;   // {ptr, kind, g} or, for a new entry, {ptr, kind, arr}
 function annMsg(m, err) { const e = $("annMsg"); e.textContent = m || ""; e.classList.toggle("err", !!err); }
 
 async function openAnnEditor(g) {
+  if (merging) cancelMerge();
   const ptr = g.dataset.src;
   if (!ptr || !specText) return;
   let spec;
@@ -1436,11 +1785,44 @@ async function openAnnEditor(g) {
   const kind = ptr.split("/").slice(-2, -1)[0];
   editing = { ptr, kind, g };
   $("annTitle").textContent = "Edit " + (KIND_TITLES[kind] || "annotation").toLowerCase();
-  await openEditorWith(ptr, kind, val, spec);
+  let shown = val, note;
+  if (VIEW_KINDS.has(kind) && val && typeof val === "object" && !Array.isArray(val)) {
+    // only what defines the view: its annotations and child views are edited on their own
+    shown = {}; const kids = {};
+    for (const [k, v] of Object.entries(val)) {
+      if (HIDDEN_KEYS.includes(k) && Array.isArray(v)) kids[k] = v; else shown[k] = v;
+    }
+    const count = keys => keys.reduce((a, k) => a + (kids[k] ? kids[k].length : 0), 0);
+    const na = count(ANN_KEYS), nv = count(CHILD_VIEWS);
+    if (Object.keys(kids).length) editing.orig = val, editing.kids = kids;
+    const parts = [];
+    if (na) parts.push(`${na} annotation${na > 1 ? "s" : ""}`);
+    if (nv) parts.push(`${nv} projected / section / detail view${nv > 1 ? "s" : ""}`);
+    if (parts.length) note = `Only the view itself is shown: its ${parts.join(" and ")} ${na + nv > 1 ? "are" : "is"} kept as ${na + nv > 1 ? "they are" : "it is"} (right-click one to edit it)`;
+  }
+  await openEditorWith(ptr, kind, shown, spec, note);
+}
+const VIEW_KINDS = new Set(["views", "projected", "sections", "details"]);
+const CHILD_VIEWS = ["projected", "sections", "details"];
+const ANN_KEYS = ["dimensions", "gdt", "datums", "datum_targets", "notes", "threads"];
+const HIDDEN_KEYS = CHILD_VIEWS.concat(ANN_KEYS);
+/** The edited view with its hidden annotations and child views put back (new ones added in the editor go after them), keeping the key order. */
+function withKids(val) {
+  if (!editing.kids || !val || typeof val !== "object" || Array.isArray(val)) return val;
+  const out = {};
+  const put = k => {
+    if (k in out) return;
+    if (editing.kids[k]) out[k] = editing.kids[k].concat(Array.isArray(val[k]) ? val[k] : []);
+    else if (k in val) out[k] = val[k];
+  };
+  for (const k of Object.keys(editing.orig)) put(k);
+  for (const k of Object.keys(val)) put(k);
+  return out;
 }
 /** The drawing JSON text with the value being edited put in. */
 function specWith(val) {
   if (editing.kind === "title") return titleSpecWith(val);
+  if (editing.kids) val = withKids(val);
   return editing.arr ? appendSpec(specText, editing.arr, val) : spliceSpec(specText, editing.ptr, val);
 }
 /** The drawing JSON with `val` at `ptr`, adding the key to its object if it isn't there yet. */
@@ -1505,7 +1887,7 @@ function positionFor(dir) {
 function refreshArrows() {
   if ($("annArrows").hidden) return;
   let have = [];
-  try { have = (JSON.parse(editorText()).projected || []).map(p => p && p.position); } catch (e) { /* half typed */ }
+  try { have = (JSON.parse(editorText()).projected || []).concat(editing && editing.kids && editing.kids.projected || []).map(p => p && p.position); } catch (e) { /* half typed */ }
   for (const b of $("annArrows").querySelectorAll("button")) {
     const pos = positionFor(b.dataset.dir);
     b.disabled = have.includes(pos);
@@ -1542,12 +1924,15 @@ async function openEditorWith(ptr, kind, val, spec, note) {
   $("annPath").textContent = ptr;
   $("annArrows").hidden = kind !== "views" && kind !== "projected";   // views that can have projected views
   $("annSheet").hidden = kind !== "title";
+  hl = { rel: [], cur: null, curSel: "" }; hlSeq++;          // nothing from the last item
   arrowProjection = spec.projection;
   annMsg(note || "Apply re-renders with the edit; Save writes it to the file");
   const isNew = !!editing.arr;
   refreshInsert();
   previewMsg("");
   const text = JSON.stringify(val, null, 2);
+  editing.text0 = text;
+  refreshMergeUi();
   $("annDlg").showModal();
   // start from the drawing as it is now (after opening, so it can be measured)
   if (svg) showPreview(new XMLSerializer().serializeToString(svg), ptr);
@@ -1570,10 +1955,12 @@ async function openEditorWith(ptr, kind, val, spec, note) {
       });
       monacoEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, applyAnnEdit);
       monacoEditor.onDidChangeModelContent(() => schedulePreview());
+      monacoEditor.onDidChangeCursorPosition(() => scheduleHighlights());
     } else monacoEditor.setModel(model);
     monacoEditor.focus();
     if (isNew) schedulePreview();         // the new entry isn't on the drawing yet
     refreshArrows();
+    scheduleHighlights();
   } catch (e) {
     // offline: plain text box
     if (!fallbackBox) {
@@ -1582,12 +1969,14 @@ async function openEditorWith(ptr, kind, val, spec, note) {
       fallbackBox.className = "fallback"; fallbackBox.spellcheck = false;
       fallbackBox.addEventListener("keydown", ev => { if ((ev.ctrlKey || ev.metaKey) && ev.key === "Enter") applyAnnEdit(); });
       fallbackBox.addEventListener("input", schedulePreview);
+      for (const ev of ["keyup", "click"]) fallbackBox.addEventListener(ev, scheduleHighlights);
       $("annEditor").appendChild(fallbackBox);
     }
     fallbackBox.value = text;
     fallbackBox.focus();
     if (isNew) schedulePreview();
     refreshArrows();
+    scheduleHighlights();
     annMsg("The code editor could not be loaded (offline?), so there is no completion here.", false);
   }
 }
@@ -1654,6 +2043,9 @@ function entryName(ptr, val) {
 }
 async function deleteSelected() {
   if (!selected || busy || !specText) return;
+  if (isTitle(selected)) { setStatus("A view's label goes with its view (double-click the label to put it back in its place)", true); return; }
+  if (isCut(selected) && selected.classList.contains("dmark")) { setStatus("Select the detail view itself to delete it", true); return; }
+  if (isCut(selected)) { setStatus("To remove a cutting plane, turn its section view back into a projected view (right-click the view)", true); return; }
   const ptr = selected.dataset.src;
   if (!ptr) { setStatus("Re-render the drawing before deleting", true); return; }
   let spec;
@@ -1676,6 +2068,14 @@ async function deleteSelected() {
 async function restoreDeleted() {
   const d = deleted.pop();
   if (!d || busy || !specText) return;
+  if (d.snap !== undefined) {
+    // a merge / unmerge: the drawing JSON as it was
+    source.json = d.snap; source.file = null; specText = d.snap;
+    await renderDrawing(source, true);
+    updateDirty();
+    setStatus(`Undid the ${d.what}` + (deleted.length ? ` (Ctrl+Z again for ${deleted[deleted.length - 1].what})` : ""));
+    return;
+  }
   let next;
   try { next = insertSpec(specText, d.arr, d.i, d.val); } catch (e) { setStatus("Could not put back " + d.what + ": " + e.message, true); return; }
   pendingRemap = s => shiftPtr(s, d.arr, d.i, 1);
@@ -1794,10 +2194,98 @@ $("annInsert").onclick = () => {
   }
 };
 
+// ------------------------------------------------------------ highlighting features in the preview
+const resolveCache = new Map();    // selector -> {kind, ids} or {error}, until the next render
+let hl = { rel: [], cur: null, curSel: "" };
+let hlTimer = null, hlSeq = 0;
+function scheduleHighlights() { clearTimeout(hlTimer); hlTimer = setTimeout(updateHighlights, 150); }
+const looksLikeSelector = s => typeof s === "string" && /^\s*(faces|edges|vertices)\s*\(/.test(s);
+/** Every selector in an edited value (from, to, of, attach, targets, ... also in nested frames). */
+function selectorsIn(v, out = new Set()) {
+  if (Array.isArray(v)) v.forEach(x => looksLikeSelector(x) ? out.add(x) : selectorsIn(x, out));
+  else if (v && typeof v === "object") for (const [k, x] of Object.entries(v)) {
+    if (typeof x === "string") { if ((SELECTOR_KEYS.has(k) || k === "targets") && looksLikeSelector(x)) out.add(x); }
+    else selectorsIn(x, out);
+  }
+  return out;
+}
+/** The selector string on the cursor's line (the one under the cursor if there are several). */
+function selectorAtCursor() {
+  let line = "", col = 0;
+  if (monacoEditor && !fallbackBox) {
+    const p = monacoEditor.getPosition(); if (!p) return "";
+    line = monacoEditor.getModel().getLineContent(p.lineNumber); col = p.column - 1;
+  } else if (fallbackBox) {
+    const t = fallbackBox.value, i = fallbackBox.selectionStart, a = t.lastIndexOf("\n", i - 1) + 1, b = t.indexOf("\n", i);
+    line = t.slice(a, b < 0 ? t.length : b); col = i - a;
+  } else return "";
+  let best = "", bestD = Infinity;
+  for (const m of line.matchAll(/"((?:[^"\\]|\\.)*)"/g)) {
+    let str; try { str = JSON.parse(m[0]); } catch (e) { continue; }
+    if (!looksLikeSelector(str)) continue;
+    const a = m.index, b = m.index + m[0].length;
+    const d = col < a ? a - col : col > b ? col - b : 0;
+    if (d < bestD) { best = str; bestD = d; }
+  }
+  return best;
+}
+async function resolveSelectors(list) {
+  const need = list.filter(x => !resolveCache.has(x));
+  if (need.length && source) {
+    const out = await postJson("/api/resolve", Object.assign(sourceBody(), { selectors: need }));
+    if (out.error) throw new Error(out.error);
+    for (const x of need) resolveCache.set(x, (out.results && out.results[x]) || { error: "not resolved" });
+  }
+  return list.map(x => resolveCache.get(x));
+}
+async function updateHighlights() {
+  if (!editing) return;
+  const seq = ++hlSeq;
+  let rel = hl.relSels || [];
+  try { rel = [...selectorsIn(JSON.parse(editorText()))]; } catch (e) { /* half typed: keep the last ones */ }
+  const curSel = selectorAtCursor();
+  try {
+    const res = await resolveSelectors([...rel, ...(curSel ? [curSel] : [])]);
+    if (seq !== hlSeq || !editing) return;
+    hl = { relSels: rel, rel: res.slice(0, rel.length).filter(r => r && r.ids), cur: curSel ? res[rel.length] : null, curSel };
+  } catch (e) {
+    if (seq !== hlSeq) return;
+    hl = { relSels: rel, rel: [], cur: null, curSel };
+  }
+  const root = $("annPreview").querySelector("svg");
+  if (root) applyHighlights(root);
+}
+/** Mark the pick items of the highlighted features in the preview `root`, and say what is shown. */
+function applyHighlights(root) {
+  root.querySelectorAll(".pick .pk-rel, .pick .pk-cur").forEach(e => e.classList.remove("pk-rel", "pk-cur"));
+  const mark = (r, cls) => {
+    if (!r || !r.ids) return 0;
+    const attr = pickAttr(r.kind);
+    let n = 0;
+    for (const id of r.ids) for (const e of root.querySelectorAll(`.pick [data-${attr}="${id}"]`)) { e.classList.add(cls); n++; }
+    for (const id of r.edges || []) for (const e of root.querySelectorAll(`.pick [data-edge="${id}"]`)) { e.classList.add(cls); n++; }
+    return n;
+  };
+  hl.rel.forEach(r => mark(r, "pk-rel"));
+  const shown = mark(hl.cur, "pk-cur");
+  root.querySelectorAll(".pick").forEach(g => g.classList.toggle("has-hl", !!g.querySelector(".pk-rel, .pk-cur")));
+  // legend
+  const box = $("annHl");
+  clear(box);
+  const add = (cls, text, title) => { const i = document.createElement("i"); i.className = cls; const t = document.createElement("span"); t.textContent = text; box.append(i, t); if (title) box.title = title; };
+  if (hl.rel.length) add("rel", "features");
+  if (hl.curSel) {
+    const c = hl.cur;
+    const what = !c ? "…" : c.error ? "selector error: " + c.error : `${c.ids.length} ${KIND_LABEL[c.kind][c.ids.length === 1 ? 0 : 1]}` + (c.ids.length && !shown ? " (not visible here)" : "");
+    add("cur", `at cursor: ${what}`, hl.curSel + " → " + what);
+  } else box.title = "";
+}
+
 // ------------------------------------------------------------ live preview in the editor
 let previewTimer = null, previewSeq = 0;
 function schedulePreview() {
   refreshArrows();
+  scheduleHighlights();
   if (fixing) return;              // the comma fix is previewed by the run that made it
   clearTimeout(previewTimer);
   previewTimer = setTimeout(runPreview, 600);
@@ -1813,8 +2301,10 @@ function showPreview(svgText, ptr) {
   root.removeAttribute("width"); root.removeAttribute("height");
   root.classList.remove("drawing", "picking", "panning");
   root.classList.add("preview");
+  root.querySelectorAll(".handle, g.handles").forEach(h => h.remove());
   clear(box).appendChild(root);
   box.classList.remove("stale");
+  applyHighlights(root);
   // the same moves as on the drawing
   initViews(root);
   for (const g of root.querySelectorAll(":scope > g.view")) {
@@ -1863,14 +2353,27 @@ async function runPreview() {
   }
 }
 
-function closeAnnEditor() { editing = null; clearTimeout(previewTimer); if ($("annDlg").open) $("annDlg").close(); }
+function closeAnnEditor() {
+  editing = null; clearTimeout(previewTimer);
+  // focus left in the editor would take the drawing's keys (Ctrl+Z, Del)
+  if (document.activeElement && $("annDlg").contains(document.activeElement)) document.activeElement.blur();
+  if ($("annDlg").open) $("annDlg").close();
+}
 $("annApply").onclick = applyAnnEdit;
 $("annCancel").onclick = closeAnnEditor;
-$("annDlg").addEventListener("close", () => { editing = null; });
+// the close event comes later: don't end an editor session opened since
+$("annDlg").addEventListener("close", () => {
+  if ($("annDlg").open) return;
+  editing = null;
+  if (document.activeElement && $("annDlg").contains(document.activeElement)) document.activeElement.blur();
+});
 stage.addEventListener("contextmenu", e => {
   if (!svg) return;
   e.preventDefault();
-  const g = annAt(e);
+  closeViewMenu();
+  const mode = $("mode").value;
+  if (mode === "geom") return;                 // geometry: nothing to edit
+  const g = mode === "ann" ? annAt(e) : null;
   if (g) {
     select(g);
     if (!g.dataset.src) { setStatus("Re-render the drawing to edit this annotation", true); return; }
@@ -1878,11 +2381,672 @@ stage.addEventListener("contextmenu", e => {
     return;
   }
   if (inTitleBlock(e)) { openTitleEditor(); return; }
+  const mk = markAt(e);
+  if (mk) { if (mode === "view") select(mk); openDetailMenu(mk.dataset.detail, e.clientX, e.clientY); return; }
   const v = viewAt(e);
-  if (!v) return;
-  if (!v.dataset.src) { setStatus("Re-render the drawing to edit this view", true); return; }
-  openAnnEditor(v);
+  if (v) openViewMenu(v, e.clientX, e.clientY);
 });
+
+
+// ------------------------------------------------------------ merging items onto one leader
+// Dimensions (diameter / radius), cosmetic threads, GD&T frames and notes on the same
+// feature can share one leader: the others get "merge": "<id of the head>". A dimension
+// is always the head of its group.
+const MERGEABLE = new Set(["dimensions", "gdt", "notes", "threads"]);
+const ptrKind = p => p.split("/").slice(-2, -1)[0];
+const ptrBase = p => p.split("/").slice(0, -2).join("/");
+const groupsOf = src => svg ? [...svg.querySelectorAll("g.ann")].filter(g => g.dataset.src === src) : [];
+const featOf = src => { const g = groupsOf(src).find(g => g.dataset.feat); return g ? g.dataset.feat : null; };
+const membersOf = src => { const g = groupsOf(src).find(g => g.dataset.members); return g ? g.dataset.members.split(" ") : []; };
+/** The head an item is merged onto (itself when it isn't merged). */
+function headOf(src) {
+  const g = svg && [...svg.querySelectorAll("g.ann[data-members]")].find(g => g.dataset.members.split(" ").includes(src));
+  return g ? g.dataset.src : src;
+}
+let merging = null;   // {head, feat, base, cands: [g], picks: Set<src>}
+function refreshMergeUi() {
+  const b = $("annMerge"), box = $("annMembers");
+  b.hidden = true; box.hidden = true; clear(box);
+  if (!editing || editing.arr || !MERGEABLE.has(editing.kind)) return;
+  const ptr = editing.ptr;
+  b.hidden = false;
+  const feat = featOf(ptr);
+  b.disabled = !feat || !specText;
+  b.title = feat ? "Merge another dimension, thread, GD&T frame or note on the same feature onto this one's leader (Ctrl+click picks several)"
+    : "Only a diameter / radius dimension, thread, frame or note on a feature can be merged (re-render if you just added it)";
+  const mem = membersOf(ptr);
+  if (!mem.length) return;
+  let spec; try { spec = JSON.parse(specText); } catch (e) { return; }
+  box.hidden = false;
+  box.appendChild(document.createTextNode("Merged:"));
+  for (const m of mem) {
+    const bt = box.appendChild(document.createElement("button"));
+    bt.textContent = entryName(m, getPtr(spec, m));
+    bt.title = "Edit " + m;
+    bt.onclick = () => { if (editorText() !== editing.text0 && !confirm("Drop the edit made here and open " + bt.textContent + "?")) return; closeAnnEditor(); openAnnEditor(groupsOf(m)[0] || { dataset: { src: m } }); };
+  }
+  const un = box.appendChild(document.createElement("button"));
+  un.textContent = "Unmerge"; un.title = "Put each merged item back on its own leader";
+  un.onclick = () => { const head = editing.ptr; closeAnnEditor(); unmerge(head); };
+}
+$("annMerge").onclick = async () => {
+  if (!editing) return;
+  const ptr = editing.ptr;
+  if (editorText() !== editing.text0) {
+    // keep the edit made in the editor
+    try { JSON.parse(autoFixCommas(true)); } catch (e) { annMsg("Fix the JSON first: " + e.message, true); return; }
+    await applyAnnEdit();
+  } else closeAnnEditor();
+  startMerge(ptr);
+};
+function startMerge(ptr) {
+  cancelMerge();
+  if (!svg) return;
+  const head = headOf(ptr);
+  const feat = featOf(head) || featOf(ptr);
+  if (!feat) { setStatus("This item is not on a feature, so nothing can be merged with it", true); return; }
+  const base = ptrBase(head), group = [head, ...membersOf(head)];
+  const hasDim = group.some(p => ptrKind(p) === "dimensions");
+  const cands = [...svg.querySelectorAll("g.ann[data-feat]")].filter(g => {
+    const s = g.dataset.src;
+    return s && g.dataset.feat === feat && ptrBase(s) === base && MERGEABLE.has(ptrKind(s)) && !group.includes(s) && !(hasDim && ptrKind(s) === "dimensions");
+  });
+  if (!cands.length) { setStatus("Nothing else on this feature in this view can be merged with it", true); return; }
+  select(null);
+  merging = { head, feat, base, hasDim, cands, picks: new Set() };
+  cands.forEach(g => g.classList.add("mergecand"));
+  groupsOf(head).forEach(g => g.classList.add("mergehead"));
+  svg.classList.add("merging");
+  mergeMsg();
+}
+function mergeMsg(err) {
+  const m = merging;
+  $("mergeBar").hidden = !m;
+  if (!m) return;
+  const t = err || (m.picks.size ? `${m.picks.size} picked: release Ctrl to merge them` : "Merge with: click a highlighted item, or Ctrl+click several (merged when Ctrl is released)");
+  $("mergeText").textContent = t;
+  $("mergeText").style.color = err ? "#c92a2a" : "";
+  $("mergeDone").hidden = !m.picks.size;
+  setStatus(t, !!err);
+}
+$("mergeCancel").onclick = () => cancelMerge("Merge cancelled");
+$("mergeDone").onclick = () => finishMerge();
+function cancelMerge(msg) {
+  if (!merging) return;
+  for (const g of svg ? svg.querySelectorAll(".mergecand, .mergepick, .mergehead") : []) g.classList.remove("mergecand", "mergepick", "mergehead");
+  if (svg) svg.classList.remove("merging");
+  merging = null;
+  $("mergeBar").hidden = true;
+  if (msg) setStatus(msg);
+}
+function pickMerge(g, add) {
+  const src = g.dataset.src, m = merging;
+  if (m.picks.has(src)) {
+    m.picks.delete(src);
+    groupsOf(src).forEach(x => { x.classList.remove("mergepick"); x.classList.add("mergecand"); });
+  } else {
+    if (ptrKind(src) === "dimensions" && (m.hasDim || [...m.picks].some(p => ptrKind(p) === "dimensions"))) {
+      mergeMsg("Only one dimension can be on a merged leader");
+      return;
+    }
+    m.picks.add(src);
+    groupsOf(src).forEach(x => { x.classList.remove("mergecand"); x.classList.add("mergepick"); });
+  }
+  if (!add) finishMerge();
+  else mergeMsg();
+}
+function finishMerge() {
+  const m = merging;
+  if (!m || !m.picks.size) return;
+  const picks = [...m.picks];
+  cancelMerge();
+  doMerge(m.head, picks);
+}
+/** A new id for an item of `kind`, not used anywhere in `spec`. */
+function newId(spec, kind) {
+  const used = new Set();
+  (function walk(o) { if (o && typeof o === "object") for (const [k, v] of Object.entries(o)) { if (k === "id" && typeof v === "string") used.add(v); walk(v); } })(spec);
+  const pre = { dimensions: "dim", gdt: "fcf", notes: "note", threads: "thread" }[kind] || "item";
+  for (let n = 1; ; n++) if (!used.has(pre + n)) return pre + n;
+}
+/** Write a set of entry changes ([ptr, value]) to the drawing JSON, undoable with Ctrl+Z, and re-render. */
+async function writeEntries(changes, what, done) {
+  if (busy || !specText) return;
+  let next = specText;
+  try { for (const [p, v] of changes) next = spliceSpec(next, p, v); } catch (e) { setStatus(`Could not ${what}: ${e.message}`, true); return; }
+  await writeSpec(next, what, done);
+}
+/** Make `next` the drawing JSON (undoable with Ctrl+Z) and re-render. */
+async function writeSpec(next, what, done, remap) {
+  if (busy || !specText) return;
+  deleted.push({ snap: specText, what });
+  source.json = next; source.file = null; specText = next;
+  pendingRemap = remap || null;
+  await renderDrawing(source, true);
+  pendingRemap = null;
+  updateDirty();
+  setStatus(done + " (Ctrl+Z undoes it; Save writes it to the file)");
+}
+async function doMerge(head, picks) {
+  let spec;
+  try { spec = JSON.parse(specText); } catch (e) { setStatus("The drawing JSON could not be read", true); return; }
+  // everything already merged onto a picked item comes along
+  const all = new Set([head, ...membersOf(head)]);
+  for (const p of picks) for (const q of [p, ...membersOf(p)]) all.add(q);
+  // a dimension heads the group
+  const newHead = [...all].find(p => ptrKind(p) === "dimensions") || head;
+  const changes = [];
+  const hv = getPtr(spec, newHead);
+  let id = hv.id;
+  if (!id) { id = newId(spec, ptrKind(newHead)); hv.id = id; }
+  if (hv.merge !== undefined) delete hv.merge;
+  changes.push([newHead, hv]);
+  for (const p of all) {
+    if (p === newHead) continue;
+    const v = getPtr(spec, p);
+    if (!v) continue;
+    v.merge = id;
+    if (ptrKind(p) === "gdt" && v.dimension !== undefined) {
+      if (!v.attach) v.attach = featureSelector(spec, newHead) || "";
+      delete v.dimension;
+    }
+    changes.push([p, v]);
+  }
+  const n = all.size - 1;
+  await writeEntries(changes, "merge", `Merged ${n} item${n > 1 ? "s" : ""} onto ${entryName(newHead, hv)}`);
+}
+/** The selector of the feature an item is on. */
+function featureSelector(spec, p) {
+  const v = getPtr(spec, p) || {};
+  return ptrKind(p) === "dimensions" || ptrKind(p) === "threads" ? v.of : v.attach;
+}
+async function unmerge(head) {
+  let spec;
+  try { spec = JSON.parse(specText); } catch (e) { setStatus("The drawing JSON could not be read", true); return; }
+  const changes = [];
+  for (const p of membersOf(head)) {
+    const v = getPtr(spec, p);
+    if (!v) continue;
+    delete v.merge;
+    if (ptrKind(p) === "gdt" && v.dimension !== undefined) { if (!v.attach) v.attach = featureSelector(spec, head) || ""; delete v.dimension; }
+    if (ptrKind(p) === "notes" && !v.attach) v.attach = featureSelector(spec, head);
+    changes.push([p, v]);
+  }
+  if (changes.length) await writeEntries(changes, "unmerge", `Unmerged ${changes.length} item${changes.length > 1 ? "s" : ""}`);
+}
+stage.addEventListener("pointerdown", e => {
+  if (!merging || !svg) return;
+  e.stopPropagation(); e.preventDefault();
+  if (e.button !== 0) return;
+  const t = e.target instanceof Element ? e.target.closest("g.ann") : null;
+  let g = t && (t.classList.contains("mergecand") || t.classList.contains("mergepick")) ? t : null;
+  if (!g) { const a = annAt(e); if (a && (a.classList.contains("mergecand") || a.classList.contains("mergepick"))) g = a; }
+  if (!g) { mergeMsg("Click one of the highlighted items (Esc or Cancel stops)"); return; }
+  pickMerge(g, e.ctrlKey || e.metaKey);
+}, true);
+document.addEventListener("keydown", e => {
+  if (merging && e.key === "Escape") { e.preventDefault(); e.stopPropagation(); cancelMerge("Merge cancelled"); }
+}, true);
+document.addEventListener("keyup", e => {
+  if (merging && (e.key === "Control" || e.key === "Meta") && merging.picks.size) finishMerge();
+});
+
+// ------------------------------------------------------------ view positions in the JSON
+// A moved view's place is written to the drawing JSON, so stepdraw puts it there:
+// a base or detail view gets "location" (sheet mm), a projected or section view
+// "distance" from its parent along the projection axis (it stays aligned).
+let viewRecordTimer = 0, dropViewMoves = null;
+function scheduleViewRecord() { clearTimeout(viewRecordTimer); viewRecordTimer = setTimeout(recordViewMoves, 350); }
+const round2 = x => Math.round(x * 100) / 100;
+/** `text` with `val` at `ptr` written on one line (the key added if missing). */
+function putCompact(text, ptr, val) {
+  const t = putSpec(text, ptr, 0);
+  const r = locate(t, ptr);
+  if (!r) return putSpec(text, ptr, val);
+  const out = t.slice(0, r[0]) + JSON.stringify(val).replace(/,/g, ", ") + t.slice(r[1]);
+  try { if (JSON.stringify(getPtr(JSON.parse(out), ptr)) === JSON.stringify(val)) return out; } catch (e) { /* fall back */ }
+  return putSpec(text, ptr, val);
+}
+async function recordViewMoves() {
+  if (!svg || !specText || !source) return;
+  if (busy || drag) { scheduleViewRecord(); return; }
+  let spec;
+  try { spec = JSON.parse(specText); } catch (e) { return; }
+  let next = specText;
+  const ids = [], names = [];
+  for (const g of svg.querySelectorAll(":scope > g.view")) {
+    const dx = num(g.dataset.dx), dy = num(g.dataset.dy);
+    if (Math.abs(dx) < 1e-6 && Math.abs(dy) < 1e-6) continue;
+    const ptr = g.dataset.src, val = ptr && getPtr(spec, ptr);
+    if (!val) continue;
+    try {
+      const n2 = placeView(next, g);
+      if (n2 === next) continue;
+      next = n2;
+    } catch (e) { setStatus("Could not record the view's place: " + e.message, true); return; }
+    ids.push(g.id); names.push(g.id);
+  }
+  if (!ids.length || next === specText) return;
+  dropViewMoves = new Set(ids);
+  try { await writeSpec(next, "view move", `Moved ${names.join(", ")}: its place is in the JSON now`); }
+  finally { dropViewMoves = null; }
+}
+/** Move a view's label by `d` (sheet mm, y down): its "title_offset" in the JSON. */
+async function moveTitle(g, d) {
+  const ptr = g.dataset.view, o = pt(g.dataset.off);       // y up
+  const off = [round2(o.x + d.x), round2(o.y - d.y)];
+  let next;
+  try {
+    next = putCompact(specText, ptr + "/title_offset", off);
+    // the view keeps its place (otherwise a bigger or smaller view could be laid out elsewhere)
+    const v = g.closest("g.view");
+    if (v) next = placeView(next, v);
+  } catch (e) { setStatus("Could not move the label: " + e.message, true); g.removeAttribute("transform"); return; }
+  const v = g.closest("g.view");
+  dropViewMoves = v ? new Set([v.id]) : null;
+  try { await writeSpec(next, "label move", `Moved the label ${g.textContent.trim()}`); } finally { dropViewMoves = null; }
+}
+/** Double-click on a view's label: back under the view. */
+function resetTitle(g) {
+  let spec;
+  try { spec = JSON.parse(specText); } catch (e) { return; }
+  const ptr = g.dataset.view, val = getPtr(spec, ptr);
+  if (!val || val.title_offset === undefined) return;
+  const nv = Object.assign({}, val); delete nv.title_offset;
+  writeEntries([[ptr, nv]], "label reset", `${g.textContent.trim()} back in its place`);
+}
+/** `text` with view `g`'s place as it is on the sheet now (its move included) written in. */
+function placeView(text, g) {
+  const ptr = g.dataset.src, val = ptr && getPtr(JSON.parse(text), ptr);
+  if (!val) return text;
+  const dx = num(g.dataset.dx), dy = num(g.dataset.dy);
+  if (g.dataset.dist !== undefined) {
+    const dir = pt(g.dataset.dir);
+    return putCompact(text, ptr + "/distance", round2(+g.dataset.dist + dx * dir.x + dy * dir.y));
+  }
+  if (g.dataset.loc) {
+    const l = pt(g.dataset.loc);           // sheet mm, y up
+    const loc = [round2(l.x + dx), round2(l.y - dy)];
+    return putCompact(text, ptr + "/location", Array.isArray(val.location) && val.location.length > 2 ? loc.concat(val.location.slice(2)) : loc);
+  }
+  return text;
+}
+/** Double-click on a view placed by the JSON: back to stepdraw's own placement. */
+function unplaceView(g) {
+  let spec;
+  try { spec = JSON.parse(specText); } catch (e) { return false; }
+  const ptr = g.dataset.src, val = ptr && getPtr(spec, ptr);
+  if (!val || (val.location === undefined && val.distance === undefined)) return false;
+  const nv = Object.assign({}, val); delete nv.location; delete nv.distance;
+  dropViewMoves = new Set([g.id]);
+  writeEntries([[ptr, nv]], "view reset", `${g.id} placed automatically again`).finally(() => { dropViewMoves = null; });
+  return true;
+}
+
+// ------------------------------------------------------------ sections: moving the cutting plane, section on / off
+/** Move the section of cutting-plane symbol `g` by `t` (sheet mm along its normal on the view). */
+async function moveCut(g, t) {
+  const src = g.dataset.section, scale = +g.dataset.scale || 1;
+  let spec;
+  try { spec = JSON.parse(specText); } catch (e) { setStatus("The drawing JSON could not be read", true); g.removeAttribute("transform"); return; }
+  const v = getPtr(spec, src);
+  if (!v) { setStatus("This section is not in the drawing JSON any more; re-render first", true); g.removeAttribute("transform"); return; }
+  const c = g.dataset.c.split(",").map(Number), d = g.dataset.d.split(",").map(Number);
+  const k = t / scale;
+  v.point = c.map((x, i) => Math.round((x + d[i] * k) * 1000) / 1000);
+  delete v.through;
+  await writeEntries([[src, v]], "cutting-plane move", `Section ${g.dataset.label}: cutting plane moved ${k >= 0 ? "+" : ""}${k.toFixed(2)} mm`);
+}
+// ------------------------------------------------------------ detail views: add, move, size and shape
+const v3 = s => s.split(",").map(Number);
+const round3 = x => Math.round(x * 1000) / 1000;
+/** Model point for a point `p` in the local (sheet, y down) coordinates of view `v`. */
+function viewToModel(v, p) {
+  const [r, u, o, s] = v.dataset.model.split(";");
+  const R = v3(r), U = v3(u), O = v3(o), k = +s || 1;
+  return O.map((x, i) => round3(x + R[i] * p.x / k - U[i] * p.y / k));
+}
+async function addDetail(v, ptr, x, y) {
+  if (!v.dataset.model) { setStatus("Re-render with the new stepdraw to add detail views", true); return; }
+  let spec;
+  try { spec = JSON.parse(specText); } catch (e) { setStatus("The drawing JSON could not be read", true); return; }
+  const q = new DOMPoint(x, y).matrixTransform(v.getScreenCTM().inverse());
+  const point = viewToModel(v, V(q.x, q.y));
+  // a sixth of the view's smaller side, in model mm
+  const geo = v.querySelector("g.geometry"), b = geo && geo.getBBox();
+  const scale = +v.dataset.model.split(";")[3] || 1;
+  const radius = b ? Math.max(1, Math.round(Math.min(b.width, b.height) / 6 / scale * 2) / 2) : 10;
+  const label = nextLabel(spec);
+  let next;
+  try { next = appendSpec(specText, ptr + "/details", { label, point, radius }); } catch (e) { setStatus("Could not add the detail: " + e.message, true); return; }
+  await writeSpec(next, "new detail", `Added detail ${label}: drag its circle in Views mode, right-click it to change its size and shape`);
+}
+/** Move the detail of mark `g` by `d` (sheet mm, y down, in its view). */
+async function moveMark(g, d) {
+  const src = g.dataset.detail, k = +g.dataset.scale || 1;
+  let spec;
+  try { spec = JSON.parse(specText); } catch (e) { setStatus("The drawing JSON could not be read", true); g.removeAttribute("transform"); return; }
+  const val = getPtr(spec, src);
+  if (!val) { setStatus("This detail is not in the drawing JSON any more; re-render first", true); g.removeAttribute("transform"); return; }
+  const c = v3(g.dataset.c), R = v3(g.dataset.r), U = v3(g.dataset.u);
+  val.point = c.map((x, i) => round3(x + R[i] * d.x / k - U[i] * d.y / k));
+  delete val.center;
+  await writeEntries([[src, val]], "detail move", `Detail ${g.dataset.label} moved`);
+}
+/** The popup for a detail view: boundary shape and size, and scale. */
+function openDetailMenu(ptr, x, y) {
+  closeViewMenu();
+  let spec, val;
+  try { spec = JSON.parse(specText); val = getPtr(spec, ptr); } catch (e) { setStatus("The drawing JSON could not be read", true); return; }
+  if (!val) { setStatus("This detail is not in the drawing JSON any more; re-render first", true); return; }
+  // the radius drawn, when the JSON leaves it to stepdraw
+  const mk = svg && [...svg.querySelectorAll("g.dmark")].find(g => g.dataset.detail === ptr);
+  const circ = mk && mk.querySelector("circle");
+  const drawnR = circ ? +circ.getAttribute("r") / (+mk.dataset.scale || 1) : 10;
+  const r0 = val.radius > 0 ? val.radius : round3(drawnR);
+  const ell = String(val.shape || "").toLowerCase() === "ellipse";
+  const m = viewMenu = document.createElement("div");
+  m.id = "viewMenu";
+  m.innerHTML = `<div class="ttl"></div>
+    <label class="row">Shape <select data-k="shape"><option value="circle">Circle</option><option value="ellipse">Ellipse</option></select></label>
+    <label class="row"><span data-l="r">Radius</span> <input data-k="radius" type="number" min="0.1" step="0.5"></label>
+    <label class="row" data-e>Radius 2 <input data-k="radius2" type="number" min="0.1" step="0.5"></label>
+    <label class="row" data-e>Angle ° <input data-k="angle" type="number" step="5"></label>
+    <label class="row">Scale <input data-k="scale" type="number" min="0.01" step="0.5"></label>
+    <label class="row" title="Draw hidden (dashed) lines in this view">Hidden lines <input data-k="hidden" type="checkbox"></label>
+    <div class="btns"><button data-b="cancel">Cancel</button><button data-b="apply" class="primary" title="Keep the change (Enter)">Accept</button></div>`;
+  m.querySelector(".ttl").textContent = `Detail ${val.label}`;
+  const f = k => m.querySelector(`[data-k="${k}"]`);
+  f("shape").value = ell ? "ellipse" : "circle";
+  f("radius").value = r0;
+  f("radius2").value = val.radius2 > 0 ? val.radius2 : round3(r0 * 0.6);
+  f("angle").value = val.angle || 0;
+  const parentScale = (() => { const pv = getPtr(spec, ptrBase(ptr)); let p = ptrBase(ptr); let sc = pv && pv.scale; while (!sc && p) { p = ptrBase(p); const w = getPtr(spec, p); sc = w && w.scale; } return sc || 1; })();
+  f("scale").value = val.scale || parentScale * 2;
+  f("scale").title = "Scale of the detail view (default twice its parent's)";
+  const hid0 = hiddenShown(ptr, val);
+  f("hidden").checked = hid0;
+  const sync = () => {
+    const e = f("shape").value === "ellipse";
+    m.querySelectorAll("[data-e]").forEach(r => { r.hidden = !e; });
+    m.querySelector('[data-l="r"]').textContent = e ? "Radius 1" : "Radius";
+    f("radius").title = e ? "Semi-axis along the angle (mm)" : "Radius of the detail circle (mm)";
+    f("radius2").title = "Semi-axis square to the angle (mm)";
+    f("angle").title = "Angle of radius 1 on the sheet, degrees anticlockwise from horizontal";
+  };
+  sync();
+  // the detail entry as the fields say (null while a value is not usable)
+  const entry = () => {
+    const num = k => +f(k).value;
+    if (!(num("radius") > 0) || (f("shape").value === "ellipse" && !(num("radius2") > 0)) || !(num("scale") > 0)) return null;
+    const nv = Object.assign({}, val, { radius: num("radius") });
+    if (f("shape").value === "ellipse") Object.assign(nv, { shape: "ellipse", radius2: num("radius2"), angle: num("angle") || 0 });
+    else { delete nv.shape; delete nv.radius2; delete nv.angle; }
+    if (num("scale") !== (val.scale || parentScale * 2)) nv.scale = num("scale");
+    else if (val.scale === undefined) delete nv.scale;
+    if (f("hidden").checked !== hid0 || val.hidden_lines !== undefined) nv.hidden_lines = f("hidden").checked;
+    return nv;
+  };
+  // every change re-renders the drawing straight away (not undoable until accepted)
+  const orig = specText;
+  let shown = orig, timer = 0;
+  const show = async text => {
+    if (text === shown) return;
+    if (busy) { clearTimeout(timer); timer = setTimeout(() => show(text), 120); return; }
+    shown = text;
+    source.json = text; source.file = null; specText = text;
+    await renderDrawing(source, true);
+    updateDirty();
+  };
+  const update = () => {
+    const nv = entry();
+    if (!nv) { setStatus("Sizes and the scale must be more than 0", true); return; }
+    let text;
+    try { text = spliceSpec(orig, ptr, nv); } catch (e) { setStatus("Could not change the detail: " + e.message, true); return; }
+    clearTimeout(timer);
+    timer = setTimeout(() => show(text), 150);
+  };
+  // turning it into an ellipse: radius 2 starts at 0.6 x the radius now set (unless the JSON had one)
+  f("shape").addEventListener("change", () => { if (f("shape").value === "ellipse" && !(val.radius2 > 0)) f("radius2").value = round3(+f("radius").value * 0.6); sync(); });
+  for (const el of m.querySelectorAll("[data-k]")) el.addEventListener(el.tagName === "SELECT" || el.type === "checkbox" ? "change" : "input", update);
+  // closing without Accept (Cancel, Esc, a click elsewhere) puts the drawing back
+  m._onClose = () => { clearTimeout(timer); if (shown !== orig) { shown = orig; show2(orig); } };
+  const show2 = async text => {
+    while (busy) await new Promise(r => setTimeout(r, 100));
+    source.json = text; source.file = null; specText = text;
+    await renderDrawing(source, true);
+    updateDirty();
+    setStatus(`Detail ${val.label}: change cancelled`);
+  };
+  const accept = async () => {
+    const nv = entry();
+    if (!nv) { setStatus("Sizes and the scale must be more than 0", true); return; }
+    clearTimeout(timer);
+    let text;
+    try { text = spliceSpec(orig, ptr, nv); } catch (e) { setStatus("Could not change the detail: " + e.message, true); return; }
+    m._onClose = null;
+    closeViewMenu();
+    if (text === orig) { if (shown !== orig) await show(orig); return; }
+    deleted.push({ snap: orig, what: "detail change" });
+    await show(text);
+    refreshButtons();
+    setStatus(`Detail ${val.label} changed (Ctrl+Z undoes it; Save writes it to the file)`);
+  };
+  m.querySelector('[data-b="apply"]').onclick = accept;
+  m.querySelector('[data-b="cancel"]').onclick = closeViewMenu;
+  m.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); accept(); } e.stopPropagation(); if (e.key === "Escape") closeViewMenu(); });
+  document.body.appendChild(m);
+  const r = m.getBoundingClientRect();
+  m.style.left = Math.max(4, Math.min(x, innerWidth - r.width - 4)) + "px";
+  m.style.top = Math.max(4, Math.min(y, innerHeight - r.height - 4)) + "px";
+  f("radius").focus(); f("radius").select();
+}
+/** Labels used by sections and details anywhere in the drawing. */
+function usedLabels(spec) {
+  const used = new Set();
+  (function walk(o, key) {
+    if (Array.isArray(o)) { for (const x of o) { if ((key === "sections" || key === "details") && x && x.label) used.add(String(x.label)); walk(x, null); } }
+    else if (o && typeof o === "object") for (const [k, v] of Object.entries(o)) walk(v, k);
+  })(spec, null);
+  return used;
+}
+function nextLabel(spec) {
+  const used = usedLabels(spec);
+  for (const c of "ABCDEFGHJKLMNPRSTUVWXYZ") if (!used.has(c)) return c;
+  for (let n = 1; ; n++) if (!used.has("A" + n)) return "A" + n;
+}
+/** What turning view `ptr` into a section (or back) would do: {ok, why}. */
+function sectionToggle(spec, ptr) {
+  const kind = ptrKind(ptr), parent = ptrBase(ptr), pkind = ptrKind(parent) || "views";
+  const val = getPtr(spec, ptr), pval = getPtr(spec, parent);
+  if (kind === "views") return { on: false, ok: false, why: "A base view has no parent view to cut" };
+  if (kind === "details") return { on: false, ok: false, why: "A detail view can't be a section" };
+  if (kind === "sections") {
+    const clash = (pval.projected || []).some(p => p && p.position === val.position);
+    return { on: true, ok: !clash, why: clash ? `The parent view already has a ${val.position} projected view` : "Turn it back into a projected view" };
+  }
+  if (pkind === "sections") return { on: false, ok: false, why: "A view projected from a section can't be cut (sections can't hold sections)" };
+  if ((val.sections || []).length) return { on: false, ok: false, why: "Remove this view's own section views first" };
+  return { on: false, ok: true, why: "Cut it: the section arrows appear on the parent view" };
+}
+async function toggleSection(ptr) {
+  let spec;
+  try { spec = JSON.parse(specText); } catch (e) { setStatus("The drawing JSON could not be read", true); return; }
+  const st = sectionToggle(spec, ptr);
+  if (!st.ok) { setStatus(st.why, true); return; }
+  const parent = ptrBase(ptr), val = getPtr(spec, ptr);
+  let nv, arr, what;
+  if (st.on) {
+    nv = Object.fromEntries(Object.entries(val).filter(([k]) => !["label", "through", "point", "hatch_angle", "hatch_spacing"].includes(k)));
+    if (/^section_/.test(nv.name || "")) delete nv.name;
+    arr = parent + "/projected"; what = `section ${val.label} is now a projected view`;
+  } else {
+    const label = nextLabel(spec);
+    nv = Object.assign({ label }, Object.fromEntries(Object.entries(val).filter(([k]) => k !== "sections")));
+    arr = parent + "/sections"; what = `the ${val.position} view is now section ${label}-${label}`;
+  }
+  let next;
+  try { next = appendSpec(removeSpec(specText, ptr), arr, nv); } catch (e) { setStatus("Could not change the view: " + e.message, true); return; }
+  // the views after it in its old list move up one (their moves go with them)
+  const parts = ptr.split("/"), i = +parts.pop(), from = parts.join("/");
+  await writeSpec(next, "section change", what.charAt(0).toUpperCase() + what.slice(1), s => shiftPtr(s, from, i, -1));
+}
+
+// ------------------------------------------------------------ view orientation and hidden lines
+/** Whether view `ptr` draws hidden lines now (as rendered; else as its JSON says). */
+function hiddenShown(ptr, val) {
+  const g = svg && [...svg.querySelectorAll(":scope > g.view")].find(g => g.dataset.src === ptr);
+  if (g && g.dataset.hidden !== undefined) return g.dataset.hidden === "1";
+  return !!(val && val.hidden_lines);
+}
+async function setHidden(ptr, on) {
+  let next;
+  try { next = putCompact(specText, ptr + "/hidden_lines", on); } catch (e) { setStatus("Could not change the view: " + e.message, true); return; }
+  await writeSpec(next, "hidden lines", on ? "Hidden lines shown" : "Hidden lines off");
+}
+// standard base-view orientations: direction (part -> viewer) and the up vector
+const ORIENTS = {
+  front: { label: "Front", dir: [0, -1, 0], up: [0, 0, 1] },
+  back: { label: "Back", dir: [0, 1, 0], up: [0, 0, 1] },
+  right: { label: "Right", dir: [1, 0, 0], up: [0, 0, 1] },
+  left: { label: "Left", dir: [-1, 0, 0], up: [0, 0, 1] },
+  top: { label: "Top", dir: [0, 0, 1], up: [0, 1, 0] },
+  bottom: { label: "Bottom", dir: [0, 0, -1], up: [0, -1, 0] },
+  iso: { label: "Isometric", dir: [1, -1, 1], up: [0, 0, 1] },
+};
+const vnorm = a => { const l = Math.hypot(...a) || 1; return a.map(x => x / l); };
+const vdot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const vcross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+/** The view's direction and up as unit vectors (up as stepdraw defaults it). */
+function viewAxes(val) {
+  const d = vnorm(val.direction || [0, 0, 1]);
+  let u = val.up || (Math.abs(d[2]) < 0.99 ? [0, 0, 1] : [0, 1, 0]);
+  const k = vdot(u, d);
+  return [d, vnorm(u.map((x, i) => x - d[i] * k))];
+}
+/** The ORIENTS key matching the view, or null. */
+function orientOf(val) {
+  if (!Array.isArray(val.direction)) return null;
+  const [d, u] = viewAxes(val);
+  for (const [k, o] of Object.entries(ORIENTS)) {
+    const [od, ou] = viewAxes({ direction: o.dir, up: o.up });
+    if (vdot(d, od) > 0.9999 && vdot(u, ou) > 0.9999) return k;
+  }
+  return null;
+}
+const tidy = a => a.map(x => { const r = Math.round(x * 1e6) / 1e6; return Object.is(r, -0) ? 0 : r; });
+async function setOrientation(ptr, dir, up, done) {
+  let next;
+  try { next = putCompact(putCompact(specText, ptr + "/direction", tidy(dir)), ptr + "/up", tidy(up)); }
+  catch (e) { setStatus("Could not change the view: " + e.message, true); return; }
+  const before = (lastWarnings || []).slice();
+  await writeSpec(next, "orientation", done);
+  const fresh = (lastWarnings || []).filter(w => !before.includes(w));
+  if (fresh.length) setStatus(`${done} — ${fresh.length} new warning${fresh.length > 1 ? "s" : ""} (annotations may need picking again; Ctrl+Z undoes it): ${fresh[0]}`, true);
+}
+/** Turn base view `ptr` a quarter turn on the sheet (sense 1: anticlockwise). */
+function rotateView(ptr, val, sense) {
+  const [d, u] = viewAxes(val);
+  const right = vcross(u, d);
+  // anticlockwise: what was on the right comes to the top
+  const nu = sense > 0 ? right : right.map(x => -x);
+  const dir = Array.isArray(val.direction) ? val.direction : d;
+  setOrientation(ptr, dir, nu, `${val.name || "The view"} turned 90° ${sense > 0 ? "anticlockwise" : "clockwise"}`);
+}
+
+// ------------------------------------------------------------ right-click on a view: add a projected view
+let viewMenu = null;
+function closeViewMenu() {
+  if (!viewMenu) return;
+  const m = viewMenu;
+  viewMenu = null;
+  m.remove();
+  if (m._onClose) m._onClose();      // e.g. the detail popup puts the drawing back unless accepted
+}
+function openViewMenu(v, x, y) {
+  if ($("mode").value === "view") select(v);
+  const ptr = v.dataset.src;
+  if (!ptr || !specText) { setStatus("Re-render the drawing to add views to this one", true); return; }
+  let spec, val;
+  try { spec = JSON.parse(specText); val = getPtr(spec, ptr); } catch (err) { setStatus("The drawing JSON could not be read", true); return; }
+  if (!val) { setStatus("This view is not in the drawing JSON any more; re-render first", true); return; }
+  const kind = ptr.split("/").slice(-2, -1)[0];
+  if (kind === "details") { openDetailMenu(ptr, x, y); return; }
+  const can = kind === "views" || kind === "projected" || kind === "sections";
+  arrowProjection = spec.projection;
+  const have = (val.projected || []).map(p => p && p.position);
+  const m = viewMenu = document.createElement("div");
+  m.id = "viewMenu";
+  const name = val.name || v.id;
+  m.innerHTML = `<div class="ttl"></div><div class="pad"></div><div class="why"></div>`;
+  m.querySelector(".ttl").textContent = name;
+  m.querySelector(".why").textContent = can ? "Add a projected view" : "A detail view can't have projected views";
+  // section on / off
+  const st = sectionToggle(spec, ptr);
+  const lab = m.appendChild(document.createElement("label"));
+  lab.className = "sect";
+  const cb = lab.appendChild(document.createElement("input"));
+  cb.type = "checkbox"; cb.checked = st.on; cb.disabled = !st.ok;
+  lab.appendChild(document.createTextNode(" Section view"));
+  lab.title = st.why;
+  cb.onchange = () => { closeViewMenu(); toggleSection(ptr); };
+  // hidden lines on / off
+  const hl = m.appendChild(document.createElement("label"));
+  hl.className = "sect";
+  const hc = hl.appendChild(document.createElement("input"));
+  hc.type = "checkbox"; hc.checked = hiddenShown(ptr, val);
+  hl.appendChild(document.createTextNode(" Show hidden lines"));
+  hl.title = "Draw hidden (dashed) lines in this view";
+  hc.onchange = () => { closeViewMenu(); setHidden(ptr, hc.checked); };
+  // a base view: which way it looks at the part
+  if (kind === "views") {
+    const row = m.appendChild(document.createElement("div"));
+    row.className = "row";
+    row.innerHTML = `<select title="Which side of the part the view looks at (its projected views follow)"></select><span class="rot"><button title="Turn the view 90° anticlockwise on the sheet">⟲</button><button title="Turn the view 90° clockwise on the sheet">⟳</button></span>`;
+    const sel = row.querySelector("select");
+    const cur = orientOf(val);
+    if (!cur) sel.appendChild(new Option("Custom", ""));
+    for (const [k, o] of Object.entries(ORIENTS)) sel.appendChild(new Option(o.label, k));
+    sel.value = cur || "";
+    sel.onchange = () => { if (!sel.value) return; closeViewMenu(); const o = ORIENTS[sel.value]; setOrientation(ptr, o.dir, o.up, `${name} now looks from the ${o.label.toLowerCase()}`); };
+    const [ccw, cw] = row.querySelectorAll(".rot button");
+    ccw.onclick = () => { closeViewMenu(); rotateView(ptr, val, 1); };
+    cw.onclick = () => { closeViewMenu(); rotateView(ptr, val, -1); };
+  }
+  // a detail view centred where the menu was opened
+  const db = m.appendChild(document.createElement("button"));
+  db.className = "adddet"; db.textContent = "Add detail view";
+  db.title = "Add a circular detail view of this view, centred where you right-clicked (drag its circle in Views mode, right-click the detail to change its size and shape)";
+  db.onclick = () => { closeViewMenu(); addDetail(v, ptr, x, y); };
+  for (const [dir, ch, area] of [["up", "↑", "1 / 2"], ["left", "←", "2 / 1"], ["right", "→", "2 / 3"], ["down", "↓", "3 / 2"]]) {
+    const pos = positionFor(dir);
+    const bt = m.querySelector(".pad").appendChild(document.createElement("button"));
+    bt.textContent = ch; bt.style.gridArea = area;
+    bt.disabled = !can || have.includes(pos);
+    bt.title = !can ? "" : bt.disabled ? `This view already has a ${pos} view`
+      : `Add the view from the ${pos} (placed ${dir === "up" ? "above" : dir === "down" ? "below" : "to the " + dir})`;
+    bt.onclick = () => { closeViewMenu(); addProjected(ptr, pos); };
+  }
+  document.body.appendChild(m);
+  // keep it on screen
+  const r = m.getBoundingClientRect();
+  m.style.left = Math.max(4, Math.min(x, innerWidth - r.width - 4)) + "px";
+  m.style.top = Math.max(4, Math.min(y, innerHeight - r.height - 4)) + "px";
+}
+async function addProjected(ptr, position) {
+  if (busy) return;
+  let next;
+  try { next = appendSpec(specText, ptr + "/projected", { position }); } catch (err) { setStatus("Could not add the view: " + err.message, true); return; }
+  source.json = next; source.file = null;
+  specText = next;
+  await renderDrawing(source, true);
+  updateDirty();
+  setStatus(`Added the ${position} view (Save writes it to the file)`);
+}
+document.addEventListener("pointerdown", e => { if (viewMenu && !viewMenu.contains(e.target)) closeViewMenu(); }, true);
+document.addEventListener("keydown", e => { if (viewMenu && e.key === "Escape") closeViewMenu(); });
+stage.addEventListener("scroll", closeViewMenu);
+addEventListener("resize", closeViewMenu);
 
 function openFile(f) {
   if (!f) return;
@@ -1976,7 +3140,7 @@ $("fit").onclick = fit;
 $("save").onclick = () => {
   const out = svg.cloneNode(true);
   out.classList.remove("drawing", "panning", "picking");
-  out.querySelectorAll(".pick").forEach(g => g.remove());     // editor-only pick layer
+  out.querySelectorAll(".pick, .handle, g.handles").forEach(g => g.remove());     // editor-only pick layer and handles
   if (!out.getAttribute("class")) out.removeAttribute("class");
   out.querySelectorAll(".sel").forEach(g => g.classList.remove("sel"));
   out.querySelectorAll('g[data-role="dimext"]:empty').forEach(g => g.remove());
@@ -1991,6 +3155,203 @@ $("save").onclick = () => {
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 };
+
+// ------------------------------------------------------------ help: the drawing JSON reference
+// docs/drawing-json.md, served by stepdraw at /api/help, shown in a side panel with a
+// Copy (and, while the JSON editor is open, Insert) button on every example.
+const helpEsc = t => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const helpSlug = t => t.toLowerCase().replace(/<[^>]*>/g, "").replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "-");
+/** Inline Markdown: `code`, **bold**, *italic*, [text](link). */
+function helpInline(t) {
+  const codes = [];
+  t = t.replace(/`([^`]+)`/g, (_, c) => { codes.push(c.replace(/\\\|/g, "|")); return `\u0000${codes.length - 1}\u0000`; });
+  t = helpEsc(t)
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[^*\w])\*([^*\s][^*]*)\*(?!\w)/g, "$1<em>$2</em>")
+    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, txt, href) => `<a href="${href.replace(/"/g, "&quot;")}">${txt}</a>`);
+  return t.replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${helpEsc(codes[+i])}</code>`);
+}
+/** Block Markdown, as used in the reference: headings, fenced code, tables, lists, paragraphs. */
+function helpMarkdown(md) {
+  const L = md.replace(/\r/g, "").split("\n"), out = [];
+  let i = 0;
+  const cells = row => row.trim().replace(/^\||\|$/g, "").split(/(?<!\\)\|/).map(c => helpInline(c.trim()));
+  while (i < L.length) {
+    const ln = L[i];
+    let m;
+    if (/^```/.test(ln)) {
+      const lang = ln.slice(3).trim(), code = [];
+      for (i++; i < L.length && !/^```/.test(L[i]); i++) code.push(L[i]);
+      i++;
+      out.push(`<div class="ex" data-lang="${helpEsc(lang)}"><pre><code>${helpEsc(code.join("\n"))}</code></pre></div>`);
+    } else if ((m = /^(#{1,4})\s+(.*)$/.exec(ln))) {
+      const n = m[1].length, txt = helpInline(m[2]);
+      out.push(`<h${n} id="${helpSlug(m[2])}">${txt}</h${n}>`);
+      i++;
+    } else if (/^\|/.test(ln)) {
+      const rows = [];
+      for (; i < L.length && /^\|/.test(L[i]); i++) rows.push(L[i]);
+      const head = cells(rows[0]), body = rows.slice(2).map(cells);
+      out.push("<table><thead><tr>" + head.map(c => `<th>${c}</th>`).join("") + "</tr></thead><tbody>" +
+        body.map(r => "<tr>" + r.map(c => `<td>${c}</td>`).join("") + "</tr>").join("") + "</tbody></table>");
+    } else if (/^\s*- /.test(ln)) {
+      // nested by indentation
+      let html = "", depth = -1;
+      const stack = [];
+      for (; i < L.length && (/^\s*- /.test(L[i]) || (/^\s{2,}\S/.test(L[i]) && depth >= 0)); i++) {
+        const li = /^(\s*)- (.*)$/.exec(L[i]);
+        if (!li) { html += " " + helpInline(L[i].trim()); continue; }
+        const d = li[1].length;
+        if (d > (stack.length ? stack[stack.length - 1] : -1)) { html += "<ul><li>"; stack.push(d); }
+        else {
+          while (stack.length > 1 && d < stack[stack.length - 1]) { html += "</li></ul>"; stack.pop(); }
+          html += "</li><li>";
+        }
+        depth = d;
+        html += helpInline(li[2]);
+      }
+      while (stack.length) { html += "</li></ul>"; stack.pop(); }
+      out.push(html);
+    } else if (!ln.trim()) {
+      i++;
+    } else {
+      const para = [];
+      for (; i < L.length && L[i].trim() && !/^(```|#{1,4}\s|\||\s*- )/.test(L[i]); i++) para.push(L[i]);
+      out.push(`<p>${helpInline(para.join(" "))}</p>`);
+    }
+  }
+  return out.join("\n");
+}
+let helpLoaded = null;
+async function loadHelp() {
+  if (helpLoaded) return helpLoaded;
+  helpLoaded = (async () => {
+    const body = $("helpBody");
+    try {
+      if (location.protocol === "file:") throw new Error("file");
+      const res = await fetch("/api/help");
+      if (!res.ok) throw new Error(res.status);
+      body.innerHTML = helpMarkdown(await res.text());
+    } catch (e) {
+      helpLoaded = null;
+      body.innerHTML = "<p><strong>The help comes from stepdraw.</strong> Start it with <code>stepdraw serve &lt;folder&gt;</code> " +
+        "and open this page from it. The same text is in <code>docs/drawing-json.md</code>.</p>";
+      return;
+    }
+    const toc = $("helpToc");
+    toc.innerHTML = "";
+    for (const h of body.querySelectorAll("h2")) toc.appendChild(new Option(h.textContent, h.id));
+    for (const ex of body.querySelectorAll(".ex")) {
+      const acts = ex.appendChild(document.createElement("div"));
+      acts.className = "acts";
+      const cp = acts.appendChild(document.createElement("button"));
+      cp.textContent = "Copy"; cp.title = "Copy this example";
+      cp.onclick = async () => {
+        const text = ex.querySelector("code").textContent;
+        try { await navigator.clipboard.writeText(text); }
+        catch (err) { const t = document.createElement("textarea"); t.value = text; document.body.appendChild(t); t.select(); document.execCommand("copy"); t.remove(); }
+        cp.textContent = "Copied"; setTimeout(() => { cp.textContent = "Copy"; }, 1200);
+      };
+      const ins = acts.appendChild(document.createElement("button"));
+      ins.className = "ins"; ins.textContent = "Insert"; ins.title = "Insert this example at the cursor in the JSON editor";
+      ins.onclick = () => helpInsert(ex.querySelector("code").textContent);
+    }
+  })();
+  return helpLoaded;
+}
+/** Put `text` at the cursor of the open JSON editor. */
+function helpInsert(text) {
+  if (!$("annDlg").open) return;
+  if (monacoEditor && !fallbackBox) {
+    monacoEditor.executeEdits("help", [{ range: monacoEditor.getSelection(), text, forceMoveMarkers: true }]);
+    monacoEditor.focus();
+  } else if (fallbackBox) {
+    fallbackBox.setRangeText(text, fallbackBox.selectionStart, fallbackBox.selectionEnd, "end");
+    fallbackBox.dispatchEvent(new Event("input"));
+    fallbackBox.focus();
+  }
+  setStatus("Inserted the example; edit it, then Apply");
+}
+// the section for each kind of JSON entry the editor edits
+const HELP_FOR = { dimensions: "dimensions", gdt: "gdt-frames", datums: "datums", datum_targets: "datum-targets",
+  notes: "notes", threads: "threads", views: "base-views", projected: "projected-views", sections: "section-views",
+  details: "detail-views", title: "title-block" };
+async function openHelp(section) {
+  const d = $("helpDlg");
+  // above the JSON editor (a modal dialog) it must be modal too, or it can't be clicked
+  const modal = $("annDlg").open;
+  if (d.open && d.matches(":modal") !== modal) d.close();
+  if (!d.open) modal ? d.showModal() : d.show();
+  await loadHelp();
+  d.querySelectorAll(".ex .ins").forEach(b => { b.hidden = !modal; });
+  if (section) {
+    const h = document.getElementById(section);
+    if (h && $("helpBody").contains(h)) { $("helpBody").scrollTop = h.offsetTop - 8; $("helpToc").value = section; }
+  }
+}
+function closeHelp() { const d = $("helpDlg"); if (d.open) d.close(); }
+$("helpBtn").onclick = () => $("helpDlg").open && !$("annDlg").open ? closeHelp() : openHelp();
+$("helpClose").onclick = closeHelp;
+$("annHelp").onclick = () => openHelp(editing && HELP_FOR[editing.kind]);
+$("helpToc").onchange = e => openHelp(e.target.value);
+$("helpBody").addEventListener("click", e => {
+  const a = e.target.closest("a[href^='#']");
+  if (!a) return;
+  e.preventDefault();
+  openHelp(a.getAttribute("href").slice(1));
+});
+// keep the contents list on the section being read
+$("helpBody").addEventListener("scroll", () => {
+  const b = $("helpBody");
+  let cur = "";
+  for (const h of b.querySelectorAll("h2")) { if (h.offsetTop - 20 <= b.scrollTop) cur = h.id; else break; }
+  if (cur) $("helpToc").value = cur;
+});
+// find: highlight matches, Enter goes to the next one
+let helpHits = [], helpHit = -1;
+function helpFind(q) {
+  const b = $("helpBody");
+  b.querySelectorAll("mark").forEach(m => m.replaceWith(document.createTextNode(m.textContent)));
+  b.normalize();
+  helpHits = []; helpHit = -1;
+  if (!q || q.length < 2) return;
+  const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+  const walk = document.createTreeWalker(b, NodeFilter.SHOW_TEXT, { acceptNode: n => n.parentElement.closest(".acts") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT });
+  const nodes = [];
+  for (let n; (n = walk.nextNode());) if (re.test(n.data)) nodes.push(n);
+  for (const n of nodes) {
+    const frag = document.createDocumentFragment();
+    let last = 0;
+    n.data.replace(re, (m, at) => {
+      frag.appendChild(document.createTextNode(n.data.slice(last, at)));
+      const mk = frag.appendChild(document.createElement("mark"));
+      mk.textContent = m; helpHits.push(mk);
+      last = at + m.length;
+    });
+    frag.appendChild(document.createTextNode(n.data.slice(last)));
+    n.replaceWith(frag);
+  }
+}
+function helpNext() {
+  if (!helpHits.length) return;
+  if (helpHit >= 0) helpHits[helpHit].classList.remove("cur");
+  helpHit = (helpHit + 1) % helpHits.length;
+  const m = helpHits[helpHit];
+  m.classList.add("cur");
+  m.scrollIntoView({ block: "center" });
+}
+$("helpFind").addEventListener("input", e => { helpFind(e.target.value); helpNext(); });
+$("helpFind").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); helpNext(); } });
+// when the JSON editor closes, help open over it goes back to a panel beside the drawing
+$("annDlg").addEventListener("close", () => {
+  const d = $("helpDlg");
+  if (d.open && d.matches(":modal")) { const top = $("helpBody").scrollTop; d.close(); d.show(); $("helpBody").scrollTop = top; d.querySelectorAll(".ex .ins").forEach(b => { b.hidden = true; }); }
+});
+$("helpDlg").addEventListener("cancel", e => { e.preventDefault(); closeHelp(); });    // Esc closes only the help
+document.addEventListener("keydown", e => {
+  if (e.key === "F1") { e.preventDefault(); $("annDlg").open ? openHelp(editing && HELP_FOR[editing.kind]) : $("helpDlg").open ? closeHelp() : openHelp(); }
+  else if (e.key === "Escape" && $("helpDlg").open && !$("helpDlg").matches(":modal") && !$("annDlg").open) closeHelp();
+}, true);
 </script>
 </body>
 </html>

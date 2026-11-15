@@ -153,21 +153,23 @@ fn add_projected(
             hidden,
             ann: &p.ann,
             src: psrc.clone(),
-            cuts: cuts_of(&psecs),
+            cuts: cuts_of(&psecs, &psrc),
             section: None,
             title: None,
-            marks: marks_of(&pdets),
+            title_offset: V2::default(),
+            marks: marks_of(model, &pdets, &psrc),
             detail: None,
         };
         let mut v = view::build_view(model, cfg, opts, warnings);
         v.place = place;
         v.parent = Some(parent.index);
+        v.dist = p.distance;
         let vi = views.len();
         cl.push(vi);
         views.push(v);
         let ctx = Parent { index: vi, frame: pf, scale: parent.scale, hidden, section: None, src: psrc };
         add_details(model, cfg, &pdets, &ctx, views, details, warnings);
-        add_sections(model, cfg, &psecs, parent.scale, vi, &ctx.src, views, cl, details, warnings);
+        add_sections(model, cfg, &psecs, parent.scale, vi, &ctx.src, proj, views, cl, details, warnings);
         add_projected(model, cfg, &p.projected, &name, &ctx, proj, views, cl, details, warnings)?;
     }
     Ok(())
@@ -214,10 +216,11 @@ pub fn render(spec: &DrawingSpec, step_path: &Path, cfg: &Config) -> Result<(Str
             hidden,
             ann: &vs.ann,
             src: format!("/views/{}", ci),
-            cuts: cuts_of(&secs),
+            cuts: cuts_of(&secs, &format!("/views/{}", ci)),
             section: None,
             title: None,
-            marks: marks_of(&dets),
+            title_offset: V2::default(),
+            marks: marks_of(&model, &dets, &format!("/views/{}", ci)),
             detail: None,
         };
         let mut base = view::build_view(&model, &cfg, opts, &mut warnings);
@@ -235,7 +238,7 @@ pub fn render(spec: &DrawingSpec, step_path: &Path, cfg: &Config) -> Result<(Str
         views.push(base);
         let ctx = Parent { index: base_i, frame: fr, scale: vs.scale, hidden, section: None, src: format!("/views/{}", ci) };
         add_details(&model, &cfg, &dets, &ctx, &mut views, &mut details, &mut warnings);
-        add_sections(&model, &cfg, &secs, vs.scale, base_i, &ctx.src, &mut views, &mut cl, &mut details, &mut warnings);
+        add_sections(&model, &cfg, &secs, vs.scale, base_i, &ctx.src, proj, &mut views, &mut cl, &mut details, &mut warnings);
         let ctx = Parent { index: base_i, frame: fr, scale: vs.scale, hidden, section: None, src: format!("/views/{}", ci) };
         add_projected(&model, &cfg, &vs.projected, &vs.name, &ctx, proj, &mut views, &mut cl, &mut details, &mut warnings)?;
         clusters.push(cl);
@@ -292,13 +295,39 @@ pub fn render(spec: &DrawingSpec, step_path: &Path, cfg: &Config) -> Result<(Str
             (Some(p), Place::Above | Place::Below) => format!(r#" data-parent="{}" data-axis="y""#, views[p].name),
             _ => String::new(),
         };
+        // for the editor to record a move in the JSON: the distance from the
+        // parent along the axis (and which sheet direction, y down, makes it
+        // grow), or the sheet position the view's `location` refers to
+        let place_attrs = match (v.parent, v.place) {
+            (Some(p), Place::Right | Place::FarRight | Place::Left | Place::Above | Place::Below) => {
+                let (pp, q) = (views[p].pos, v.pos);
+                let (d, dir) = match v.place {
+                    Place::Left => (pp.x - q.x, "-1,0"),
+                    Place::Above => (q.y - pp.y, "0,-1"),
+                    Place::Below => (pp.y - q.y, "0,1"),
+                    _ => (q.x - pp.x, "1,0"),
+                };
+                format!(r#" data-dist="{:.3}" data-dir="{}""#, d, dir)
+            }
+            _ => {
+                let l = v.pos + v.loc_ref;
+                format!(r#" data-loc="{:.3},{:.3}""#, l.x, l.y)
+            }
+        };
         let _ = writeln!(
             s,
-            r#"<g id="{n}" class="view {k}" inkscape:label="{n}" data-src="{src}"{al} transform="translate({x:.3} {y:.3})">"#,
+            r#"<g id="{n}" class="view {k}" inkscape:label="{n}" data-src="{src}" data-model="{md}" data-hidden="{hd}"{al}{pa} transform="translate({x:.3} {y:.3})">"#,
             n = v.name,
             k = kind,
             src = v.src,
+            md = {
+                let (r, u, _) = v.frame;
+                let o = v.origin;
+                format!("{},{},{};{},{},{};{},{},{};{}", r.x, r.y, r.z, u.x, u.y, u.z, o.x, o.y, o.z, v.scale)
+            },
+            hd = v.hidden as u8,
             al = align,
+            pa = place_attrs,
             x = v.pos.x,
             y = sheet::H() - v.pos.y
         );
@@ -343,15 +372,16 @@ fn plan_sections<'a>(
                 let r = annot::resolve(m, sel).map_err(|e| format!("section {}: {}", s.label, e))?;
                 r.iter().fold(V3::default(), |a, g| a + g.rep) / r.len() as f64
             }
-            (None, None) => return Err(format!("section {} needs \"through\" (selector) or \"point\"", s.label)),
+            // through the centre of the part
+            (None, None) => m.bbox.center(),
         };
         out.push(PlannedSection { spec: s, frame, place, c, idx });
     }
     Ok(out)
 }
 
-fn cuts_of(secs: &[PlannedSection]) -> Vec<view::Cut> {
-    secs.iter().map(|s| view::Cut { label: s.spec.label.clone(), c: s.c, d: s.frame.2 }).collect()
+fn cuts_of(secs: &[PlannedSection], owner: &str) -> Vec<view::Cut> {
+    secs.iter().map(|s| view::Cut { label: s.spec.label.clone(), c: s.c, d: s.frame.2, src: format!("{}/sections/{}", owner, s.idx) }).collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -362,6 +392,7 @@ fn add_sections(
     scale: f64,
     parent: usize,
     owner: &str,
+    proj: config::Projection,
     views: &mut Vec<View>,
     cl: &mut Vec<usize>,
     details: &mut Vec<usize>,
@@ -390,17 +421,25 @@ fn add_sections(
             cuts: vec![],
             section: Some((clip, hatch.0, hatch.1)),
             title: Some(format!("SECTION {}-{}", sp.label, sp.label)),
-            marks: marks_of(&dets),
+            title_offset: sp.title_offset.map_or(V2::default(), |t| v2(t[0], t[1])),
+            marks: marks_of(m, &dets, &src),
             detail: None,
         };
         let mut v = view::build_view(m, cfg, opts, warnings);
         v.place = s.place;
         v.parent = Some(parent);
+        v.dist = sp.distance;
         let vi = views.len();
         cl.push(vi);
         views.push(v);
         let ctx = Parent { index: vi, frame: s.frame, scale, hidden, section: Some((clip, hatch.0, hatch.1)), src };
         add_details(m, cfg, &dets, &ctx, views, details, warnings);
+        // views projected from the section are whole (not cut)
+        let pctx = Parent { section: None, hidden: cfg.hidden_lines, ..ctx };
+        let name = sp.name.clone().unwrap_or_else(|| format!("section_{}", sp.label));
+        if let Err(e) = add_projected(m, cfg, &sp.projected, &name, &pctx, proj, views, cl, details, warnings) {
+            warnings.push(e);
+        }
     }
 }
 
@@ -425,18 +464,28 @@ fn plan_details<'a>(m: &brep::Model, dets: &'a [DetailSpec]) -> Result<Vec<(&'a 
                 let r = annot::resolve(m, sel).map_err(|e| format!("detail {}: {}", d.label, e))?;
                 r.iter().fold(V3::default(), |a, g| a + g.rep) / r.len() as f64
             }
-            (None, None) => return Err(format!("detail {} needs \"center\" (selector) or \"point\"", d.label)),
+            (None, None) => m.bbox.center(),
         };
-        if d.radius <= 0.0 {
-            return Err(format!("detail {} needs a positive \"radius\"", d.label));
-        }
         out.push((d, c, i));
     }
     Ok(out)
 }
 
-fn marks_of(dets: &[(&DetailSpec, V3, usize)]) -> Vec<view::DetailMark> {
-    dets.iter().map(|(d, c, _)| view::DetailMark { label: d.label.clone(), c: *c, r: d.radius }).collect()
+fn marks_of(m: &brep::Model, dets: &[(&DetailSpec, V3, usize)], owner: &str) -> Vec<view::DetailMark> {
+    dets.iter()
+        .map(|(d, c, i)| view::DetailMark { label: d.label.clone(), c: *c, shape: det_shape(m, d), src: format!("{}/details/{}", owner, i) })
+        .collect()
+}
+
+/// Boundary of a detail in model units.
+fn det_shape(m: &brep::Model, d: &DetailSpec) -> view::DetShape {
+    let r = if d.radius > 0.0 { d.radius } else { (m.diag() * 0.12).max(1.0) };
+    if d.shape.as_deref().is_some_and(|s| s.eq_ignore_ascii_case("ellipse")) {
+        let r2 = d.radius2.filter(|x| *x > 0.0).unwrap_or(r * 0.6);
+        view::DetShape { r, r2, ang: d.angle.unwrap_or(0.0) }
+    } else {
+        view::DetShape { r, r2: r, ang: 0.0 }
+    }
 }
 
 fn add_details(
@@ -460,12 +509,14 @@ fn add_details(
             cuts: vec![],
             section: p.section,
             title: Some(format!("DETAIL {} ({})", d.label, scale_text(scale))),
+            title_offset: d.title_offset.map_or(V2::default(), |t| v2(t[0], t[1])),
             marks: vec![],
-            detail: Some((*c, d.radius, d.border.unwrap_or(true))),
+            detail: Some((*c, det_shape(m, d), d.border.unwrap_or(true))),
         };
         let mut v = view::build_view(m, cfg, opts, warnings);
         let pr = hlr::Projector { o: m.bbox.center(), r: p.frame.0, u: p.frame.1, d: p.frame.2, scale: p.scale };
         v.anchor = Some((p.index, pr.p(*c)));
+        v.loc_ref = hlr::Projector { scale, ..pr }.p(*c);
         match &d.location {
             Some(l) if l.len() >= 2 => {
                 // location is the detail centre on the sheet

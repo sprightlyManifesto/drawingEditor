@@ -4,6 +4,7 @@
 //! casts a ray towards the viewer and is hidden if the ray meets a face.
 
 use crate::brep::{Curve, Model, SurfKind};
+use crate::config::TangentEdges;
 use crate::geom::*;
 use std::collections::HashMap;
 use std::f64::consts::PI;
@@ -40,6 +41,8 @@ pub struct ViewLines {
     pub sil_runs: Vec<(usize, Vec<V2>)>,
     /// Hidden runs of model edges (edge index), when hidden lines are drawn.
     pub hidden_runs: Vec<(usize, Vec<V2>)>,
+    /// Visible smooth (tangent) edges, drawn as thin witness lines.
+    pub tangent: Vec<Vec<V2>>,
 }
 
 /// Cutting plane through `c`; material on the +`d` side is removed.
@@ -63,7 +66,10 @@ impl Clip {
     }
 }
 
-fn occluded(m: &Model, p: V3, d: V3, eps: f64, clip: Option<&Clip>) -> bool {
+/// Whether the ray p + t d (t > 0) passes through some face: 0 = no, 1 = yes,
+/// 2 = it only touches face boundaries (an edge, or the outline of a face).
+fn ray_blocked(m: &Model, p: V3, d: V3, eps: f64, clip: Option<&Clip>) -> u8 {
+    let mut touch = 0;
     for f in &m.faces {
         if !f.bbox.expand(eps * 10.0).ray_hits(p, d) {
             continue;
@@ -71,21 +77,49 @@ fn occluded(m: &Model, p: V3, d: V3, eps: f64, clip: Option<&Clip>) -> bool {
         for t in f.surf.hits(p, d) {
             let q = p + d * t;
             if t > eps && !clip.is_some_and(|c| c.removed(q, eps)) && f.contains(q) {
-                return true;
+                if !f.near_boundary(q, eps * 100.0) {
+                    return 1;
+                }
+                touch = 2;
             }
         }
     }
-    false
+    touch
 }
 
-/// 0 = cut away, 1 = visible, 2 = hidden
-fn state(m: &Model, p: V3, d: V3, eps: f64, cf: Option<&CutFace>) -> u8 {
+fn occluded(m: &Model, p: V3, d: V3, eps: f64, clip: Option<&Clip>) -> bool {
+    match ray_blocked(m, p, d, eps, clip) {
+        0 => false,
+        1 => true,
+        _ => {
+            // The ray only touches faces at their boundaries, where whether it
+            // is inside a face comes down to rounding. Either it skims past
+            // the part (e.g. along its outline: visible), or it runs through
+            // the material along a seam between faces (hidden). Rays moved a
+            // little to three sides tell which: in the material every one of
+            // them goes through a face; skimming past, some get by.
+            let (a, b) = {
+                let a = d.any_perp().norm();
+                (a, d.cross(a).norm())
+            };
+            let h = eps * 300.0;
+            (0..3).all(|k| {
+                let ang = 0.3 + k as f64 * std::f64::consts::TAU / 3.0;
+                ray_blocked(m, p + (a * ang.cos() + b * ang.sin()) * h, d, eps, clip) == 1
+            })
+        }
+    }
+}
+
+/// 0 = cut away, 1 = visible, 2 = hidden. `q` is `p` moved a hair off the
+/// solid (see `classify`); the ray to the viewer starts there.
+fn state(m: &Model, p: V3, q: V3, d: V3, eps: f64, cf: Option<&CutFace>) -> u8 {
     let clip = cf.map(|c| &c.clip);
     if clip.is_some_and(|c| c.removed(p, eps)) {
         0
     } else if cf.is_some_and(|c| (p - c.clip.c).dot(c.clip.d) < -eps * 10.0 && crate::section::inside(&c.segs, c.pr.p(p))) {
         2
-    } else if occluded(m, p, d, eps, clip) {
+    } else if occluded(m, q, d, eps, clip) {
         2
     } else {
         1
@@ -105,23 +139,44 @@ fn resample(pts: &[V3], step: f64) -> Vec<V3> {
 }
 
 /// Split a 3D polyline into runs by state (see `state`).
-fn classify(m: &Model, pts: &[V3], d: V3, step: f64, eps: f64, clip: Option<&CutFace>) -> Vec<(Vec<V3>, u8)> {
-    let s = resample(pts, step);
-    let vis: Vec<u8> = s.iter().map(|p| state(m, *p, d, eps, clip)).collect();
+///
+/// A point of an edge or silhouette lies on the faces it belongs to, so a ray
+/// from it to the viewer starts on (or, from a chord of a curve, just inside)
+/// those faces, and whether they block it comes down to rounding: that lost
+/// whole edges. So each point is first put back on the true curve (`snap`),
+/// and the ray starts from it moved a hair out of the solid, along the
+/// outward normals of its `faces`; it then never starts on a face.
+fn classify(
+    m: &Model,
+    pts: &[V3],
+    faces: &[usize],
+    d: V3,
+    step: f64,
+    eps: f64,
+    clip: Option<&CutFace>,
+    snap: &dyn Fn(V3) -> V3,
+) -> Vec<(Vec<V3>, u8)> {
+    let off = |p: V3| {
+        let n = faces.iter().filter_map(|&f| m.faces[f].outward_at(p)).fold(V3::default(), |a, b| a + b);
+        if n.len() > 1e-9 { p + n.norm() * (eps * 10.0) } else { p }
+    };
+    let state = |p: V3| state(m, p, off(p), d, eps, clip);
+    let s: Vec<V3> = resample(pts, step).into_iter().map(snap).collect();
+    let vis: Vec<u8> = s.iter().map(|p| state(*p)).collect();
     let mut runs: Vec<(Vec<V3>, u8)> = vec![(vec![s[0]], vis[0])];
     for i in 1..s.len() {
         if vis[i] != vis[i - 1] {
             // bisect to locate the transition
             let (mut a, mut b) = (s[i - 1], s[i]);
             for _ in 0..10 {
-                let mid = a.lerp(b, 0.5);
-                if state(m, mid, d, eps, clip) == vis[i - 1] {
+                let mid = snap(a.lerp(b, 0.5));
+                if state(mid) == vis[i - 1] {
                     a = mid;
                 } else {
                     b = mid;
                 }
             }
-            let t = a.lerp(b, 0.5);
+            let t = snap(a.lerp(b, 0.5));
             runs.last_mut().unwrap().0.push(t);
             runs.push((vec![t], vis[i]));
         }
@@ -229,6 +284,12 @@ fn silhouettes(m: &Model, d: V3) -> Vec<(usize, Vec<V3>)> {
                 }
                 continue;
             }
+            SurfKind::Torus { major, minor } => {
+                for c in torus_silhouette(f, major, minor, dx, dy, da) {
+                    out.push((fi, c));
+                }
+                continue;
+            }
             _ => continue,
         };
         for (u, g) in lines {
@@ -248,6 +309,77 @@ fn silhouettes(m: &Model, d: V3) -> Vec<(usize, Vec<V3>)> {
                 out.push((fi, cur));
             }
         }
+    }
+    out
+}
+
+/// Silhouette of a torus face (e.g. a fillet): the points where the surface
+/// normal is square to the view direction. On the torus
+/// P(u, w) = o + (R + r cos w)(cos u x + sin u y) + r sin w z the normal is
+/// cos w (cos u x + sin u y) + sin w z, so for each tube angle w the
+/// silhouette is at m cos(u - phi) = -da tan w, with (dx, dy, da) the view
+/// direction in the torus frame, m = |(dx, dy)| and phi = atan2(dy, dx).
+fn torus_silhouette(f: &crate::brep::Face, big: f64, r: f64, dx: f64, dy: f64, da: f64) -> Vec<Vec<V3>> {
+    let fr = f.surf.fr;
+    let tube = |p: V3| {
+        let q = fr.local(p);
+        q.z.atan2((q.x * q.x + q.y * q.y).sqrt() - big)
+    };
+    // the arc of tube angles the face covers: the shortest arc holding all its boundary points
+    let mut ws: Vec<f64> = f.loop_pts.iter().flatten().map(|p| wrap_2pi(tube(*p))).collect();
+    if ws.is_empty() {
+        return vec![];
+    }
+    ws.sort_by(|a, b| a.total_cmp(b));
+    let (mut gap, mut w0) = (ws[0] + std::f64::consts::TAU - ws[ws.len() - 1], ws[0]);
+    for k in 1..ws.len() {
+        if ws[k] - ws[k - 1] > gap {
+            gap = ws[k] - ws[k - 1];
+            w0 = ws[k];
+        }
+    }
+    let span = (std::f64::consts::TAU - gap).max(1e-9);
+    let at = |u: f64, w: f64| fr.o + (fr.x * u.cos() + fr.y * u.sin()) * (big + r * w.cos()) + fr.z * (r * w.sin());
+    let inside = |u: f64, w: f64| f.contains_uv(v2(wrap_2pi(u), r * w.sin()));
+    let mut out = Vec::new();
+    let mut flush = |cur: &mut Vec<V3>| {
+        if cur.len() > 1 {
+            out.push(std::mem::take(cur));
+        } else {
+            cur.clear();
+        }
+    };
+    let m = (dx * dx + dy * dy).sqrt();
+    if m < 1e-9 {
+        // looking along the axis: the outer and inner equators, if on the face
+        for w in [0.0, PI] {
+            if wrap_2pi(w - w0) > span + 1e-9 {
+                continue;
+            }
+            let mut cur = Vec::new();
+            for i in 0..=192 {
+                let u = i as f64 / 192.0 * std::f64::consts::TAU;
+                if inside(u, w) { cur.push(at(u, w)) } else { flush(&mut cur) }
+            }
+            flush(&mut cur);
+        }
+        return out;
+    }
+    let phi = dy.atan2(dx);
+    let n = 48;
+    for sign in [1.0, -1.0] {
+        let mut cur = Vec::new();
+        for i in 0..=n {
+            let w = w0 + span * i as f64 / n as f64;
+            let c = -da * w.tan() / m;
+            if w.cos().abs() < 1e-12 || c.abs() > 1.0 {
+                flush(&mut cur);
+                continue;
+            }
+            let u = phi + sign * c.acos();
+            if inside(u, w) { cur.push(at(u, w)) } else { flush(&mut cur) }
+        }
+        flush(&mut cur);
     }
     out
 }
@@ -338,12 +470,21 @@ fn remove_covered(lines: Vec<Vec<V2>>, grid: &SegGrid, tol: f64, min_len: f64) -
     out.into_iter().map(|l| simplify(&l, 0.005)).filter(|l| poly_len(l) > 0.2).collect()
 }
 
-pub fn compute(m: &Model, pr: &Projector, hidden: bool, centre: bool, clip: Option<Clip>) -> ViewLines {
+pub fn compute(m: &Model, pr: &Projector, hidden: bool, centre: bool, tangent: TangentEdges, clip: Option<Clip>) -> ViewLines {
     let diag = m.diag();
     let step = diag / 300.0;
     let eps = diag * 1e-5;
-    // seam edges (both sides on the same periodic face) are not real edges
-    let mut curves: Vec<Vec<V3>> = m.edges.iter().map(|e| if e.faces.len() < 2 { Vec::new() } else { e.pts.clone() }).collect();
+    // seam edges (both sides on the same periodic face) are not real edges;
+    // smooth (tangent) edges, such as the ends of a fillet, are drawn as
+    // `tangent` says (not, as thin witness lines, or as ordinary edges)
+    let smooth: Vec<bool> = (0..m.edges.len()).map(|i| tangent != TangentEdges::Visible && m.smooth_edge(i)).collect();
+    let mut curves: Vec<Vec<V3>> = m
+        .edges
+        .iter()
+        .enumerate()
+        .map(|(i, e)| if e.faces.len() < 2 || smooth[i] && tangent == TangentEdges::None { Vec::new() } else { e.pts.clone() })
+        .collect();
+    let mut tan_vis: Vec<Vec<V2>> = Vec::new();
     let n_edges = curves.len();
     let sil = silhouettes(m, pr.d);
     let sil_face: Vec<usize> = sil.iter().map(|s| s.0).collect();
@@ -371,13 +512,37 @@ pub fn compute(m: &Model, pr: &Projector, hidden: bool, centre: bool, clip: Opti
         if poly_len(&proj) < 1e-3 {
             continue; // seen end-on
         }
-        for (run, v) in classify(m, c, pr.d, step, eps, cf.as_ref()) {
+        // circles and ellipses: points back on the curve (in its plane, at its angle)
+        let conic = if ci < n_edges {
+            match &m.edges[ci].curve {
+                Curve::Circle { fr, r } => Some((*fr, *r, *r)),
+                Curve::Ellipse { fr, a, b } => Some((*fr, *a, *b)),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let snap = |p: V3| match &conic {
+            Some((fr, a, b)) => {
+                let q = fr.local(p);
+                let t = (q.y / b).atan2(q.x / a);
+                if q.x.abs() + q.y.abs() > 1e-12 { fr.o + fr.x * (a * t.cos()) + fr.y * (b * t.sin()) } else { p }
+            }
+            None => p,
+        };
+        let faces: &[usize] = if ci < n_edges { &m.edges[ci].faces } else { std::slice::from_ref(&sil_face[ci - n_edges]) };
+        for (run, v) in classify(m, c, faces, pr.d, step, eps, cf.as_ref(), &snap) {
             let p2: Vec<V2> = run.iter().map(|p| pr.p(*p)).collect();
             let p2 = simplify(&p2, 0.005);
             if poly_len(&p2) < 0.05 {
                 continue;
             }
             match v {
+                1 if ci < n_edges && smooth[ci] => {
+                    edge_runs.push((ci, p2.clone()));
+                    tan_vis.push(p2)
+                }
+                2 if ci < n_edges && smooth[ci] => {}
                 1 if ci < n_edges => {
                     edge_runs.push((ci, p2.clone()));
                     vis2.push(p2)
@@ -419,6 +584,8 @@ pub fn compute(m: &Model, pr: &Projector, hidden: bool, centre: bool, clip: Opti
         }
     }
     vis2.extend(sil_vis);
+    // witness lines coinciding with outlines (e.g. a fillet's end seen end-on) are dropped
+    let tangent = remove_covered(tan_vis, &grid, 0.05, 0.6);
     let hid2 = remove_covered(hid2, &grid, 0.08, 0.6);
     // de-duplicate hidden lines against each other
     let mut hgrid = SegGrid::new(2.0);
@@ -433,7 +600,7 @@ pub fn compute(m: &Model, pr: &Projector, hidden: bool, centre: bool, clip: Opti
         }
     }
     let center = if centre { centre_lines(m, pr, clip.as_ref(), eps) } else { vec![] };
-    ViewLines { visible: vis2, hidden: hid_out, center, cut, edge_runs, sil_runs, hidden_runs }
+    ViewLines { visible: vis2, hidden: hid_out, center, cut, edge_runs, sil_runs, hidden_runs, tangent }
 }
 
 fn centre_lines(m: &Model, pr: &Projector, clip: Option<&Clip>, eps: f64) -> Vec<(V2, V2)> {
@@ -453,7 +620,8 @@ fn centre_lines(m: &Model, pr: &Projector, clip: Option<&Clip>, eps: f64) -> Vec
     };
     for e in &m.edges {
         if let Curve::Circle { fr, r } = &e.curve {
-            if fr.z.dot(pr.d).abs() > 1.0 - 1e-6 && e.sweep.abs() >= PI - 1e-6 && !clip.is_some_and(|c| c.removed(fr.o, eps)) {
+            // a section shows only the axes of the holes it cuts, no centre marks
+            if clip.is_none() && fr.z.dot(pr.d).abs() > 1.0 - 1e-6 && e.sweep.abs() >= PI - 1e-6 && !clip.is_some_and(|c| c.removed(fr.o, eps)) {
                 push_circle(pr.p(fr.o), r * pr.scale, &mut out);
             }
         }
@@ -466,8 +634,18 @@ fn centre_lines(m: &Model, pr: &Projector, clip: Option<&Clip>, eps: f64) -> Vec
                 continue;
             }
             let (v0, v1) = f.v_range();
-            if clip.is_some_and(|c| c.removed(fr.o + fr.z * ((v0 + v1) * 0.5), eps)) {
-                continue;
+            if let Some(c) = clip {
+                // only features the section plane passes through: the axis is
+                // within the radius of the plane (and parallel to it)
+                let r = match f.surf.kind {
+                    SurfKind::Cylinder { r } => r,
+                    SurfKind::Cone { r, semi } => (r + v0 * semi.tan()).abs().max((r + v1 * semi.tan()).abs()),
+                    _ => 0.0,
+                };
+                let n = c.d.norm();
+                if fr.z.dot(n).abs() > 1e-6 || (fr.o - c.c).dot(n).abs() >= r - eps {
+                    continue;
+                }
             }
             let a = pr.p(fr.o + fr.z * v0);
             let b = pr.p(fr.o + fr.z * v1);

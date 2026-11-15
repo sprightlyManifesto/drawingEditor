@@ -343,6 +343,48 @@ pub fn poly_area(p: &[V2]) -> f64 {
 
 /// Polygon `p` clipped to the circle (c, r) (Sutherland–Hodgman against a
 /// 64-gon), for regions of detail views.
+/// An ellipse on the sheet: centre, semi-axes `a` (along `ang`, radians) and `b`.
+/// A circle has a == b.
+#[derive(Clone, Copy, Debug)]
+pub struct Ell {
+    pub c: V2,
+    pub a: f64,
+    pub b: f64,
+    pub ang: f64,
+}
+
+impl Ell {
+    /// Into the space where the ellipse is the unit circle at the origin.
+    pub fn to_unit(&self, p: V2) -> V2 {
+        let d = (p - self.c).rot(-self.ang);
+        v2(d.x / self.a, d.y / self.b)
+    }
+    pub fn from_unit(&self, q: V2) -> V2 {
+        self.c + v2(q.x * self.a, q.y * self.b).rot(self.ang)
+    }
+    /// Points round the ellipse (closed: the first point is repeated).
+    pub fn ring(&self, n: usize) -> Vec<V2> {
+        (0..=n).map(|i| self.from_unit(V2::from_angle(i as f64 / n as f64 * std::f64::consts::TAU))).collect()
+    }
+    /// Distance from the centre to the ellipse in direction `dir` (unit).
+    pub fn reach(&self, dir: V2) -> f64 {
+        let q = self.to_unit(self.c + dir);
+        1.0 / q.len().max(1e-12)
+    }
+}
+
+/// Parts of the polyline inside the ellipse.
+pub fn clip_poly_ell(pts: &[V2], e: &Ell) -> Vec<Vec<V2>> {
+    let u: Vec<V2> = pts.iter().map(|p| e.to_unit(*p)).collect();
+    clip_poly_circle(&u, V2::default(), 1.0).into_iter().map(|l| l.into_iter().map(|q| e.from_unit(q)).collect()).collect()
+}
+
+/// The polygon `p` cut to the ellipse.
+pub fn clip_region_ell(p: &[V2], e: &Ell) -> Vec<V2> {
+    let u: Vec<V2> = p.iter().map(|q| e.to_unit(*q)).collect();
+    clip_region_circle(&u, V2::default(), 1.0).into_iter().map(|q| e.from_unit(q)).collect()
+}
+
 pub fn clip_region_circle(p: &[V2], c: V2, r: f64) -> Vec<V2> {
     let n = 64;
     let ring: Vec<V2> = (0..n).map(|i| c + V2::from_angle(i as f64 / n as f64 * std::f64::consts::TAU) * r).collect();

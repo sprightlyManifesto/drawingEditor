@@ -8,7 +8,7 @@ use crate::config::*;
 use crate::geom::*;
 use crate::hlr::Projector;
 use crate::selector::{select, Kind};
-use crate::svg::{text_width, vec_attr, Anchor, Prim};
+use crate::svg::{bbox_of, text_width, vec_attr, Anchor, Prim};
 use std::f64::consts::PI;
 
 /// Geometric meaning of one selected object.
@@ -104,6 +104,9 @@ pub struct DimText {
     /// where the dimension (or leader shoulder) line is, across the text,
     /// relative to the baseline; frames go on the other side of the text
     pub line_y: f64,
+    /// more lines of text (merged notes, thread callouts), read after `main`:
+    /// between it and the line when the line is below the text, else beyond it
+    pub extra: Vec<String>,
 }
 
 /// Copy of `p` with every point mapped by `f` and text turned by `rot` degrees.
@@ -218,6 +221,10 @@ pub struct Annotator<'a> {
     used: [f64; 4],
     pub warnings: Vec<String>,
     tol_warn: std::cell::RefCell<Vec<String>>,
+    /// The view draws hidden lines.
+    pub hidden: bool,
+    /// Section view: the cutting plane.
+    pub clip: Option<crate::hlr::Clip>,
 }
 
 impl<'a> Annotator<'a> {
@@ -232,7 +239,7 @@ impl<'a> Annotator<'a> {
                 segs.push((w[0], w[1]));
             }
         }
-        Annotator { m, pr, cfg, geom, segs, dims: vec![], gdt: vec![], obst: vec![], soft: vec![], used: [0.0; 4], warnings: vec![], tol_warn: Default::default() }
+        Annotator { m, pr, cfg, geom, segs, dims: vec![], gdt: vec![], obst: vec![], soft: vec![], used: [0.0; 4], warnings: vec![], tol_warn: Default::default(), hidden: false, clip: None }
     }
 
     fn h(&self) -> f64 {
@@ -256,6 +263,7 @@ impl<'a> Annotator<'a> {
             dt.frames.push((prims, w, g.datum.clone().filter(|d| !d.is_empty())));
         }
         dt.datum = spec.datum.clone().filter(|d| !d.is_empty());
+        dt.extra = spec.extra.clone();
         dt
     }
 
@@ -277,7 +285,7 @@ impl<'a> Annotator<'a> {
         };
         let has_value = spec.text.as_ref().map_or(true, |t| t.contains("<>"));
         let whole = |n: &str| if has_value { format!("{}{}{}", pre, n, post) } else { pre.clone() };
-        let mut dt = DimText { main: whole(&num), plus: None, minus: None, limits: false, tail: String::new(), basic: false, frames: vec![], datum: None, line_y: -1.0 };
+        let mut dt = DimText { main: whole(&num), plus: None, minus: None, limits: false, tail: String::new(), basic: false, frames: vec![], datum: None, line_y: -1.0, extra: vec![] };
         // signed deviation text; both deviations get the same decimal places
         let dev = |v: f64, d: usize| {
             if v == 0.0 {
@@ -381,7 +389,12 @@ impl<'a> Annotator<'a> {
 
     /// Height of the text block above its baseline.
     fn text_h(&self, dt: &DimText) -> f64 {
-        self.h() * if dt.limits { 1.75 } else { 1.0 }
+        self.h() * if dt.limits { 1.75 } else { 1.0 } + self.extra_h(dt)
+    }
+
+    /// Height taken by the extra lines of a dimension text.
+    fn extra_h(&self, dt: &DimText) -> f64 {
+        dt.extra.len() as f64 * 1.4 * self.h()
     }
 
     /// Height of the whole block (text, attached frames and datum symbol)
@@ -413,6 +426,11 @@ impl<'a> Annotator<'a> {
         if dt.basic {
             top = 0.72 * h + 0.7;
             bot = bot.min(-0.7);
+        }
+        if sgn > 0.0 {
+            top += self.extra_h(dt);
+        } else {
+            bot -= self.extra_h(dt);
         }
         let line_y = if sgn > 0.0 { dt.line_y.min(bot) } else { dt.line_y.max(top) };
         let tri_h = h * 0.8;
@@ -456,7 +474,13 @@ impl<'a> Annotator<'a> {
         if dt.datum.is_some() {
             w += 1.5 + self.datum_w(dt);
         }
-        w
+        dt.extra.iter().map(|l| text_width(l, h)).fold(w, f64::max)
+    }
+
+    /// Width of the first line (main text, tolerance, datum symbol).
+    fn main_w(&self, dt: &DimText) -> f64 {
+        let d = DimText { extra: vec![], ..dt.clone() };
+        self.text_w(&d)
     }
 
     /// Text prims for a dimension text, baseline origin `o`, rotation `rot` (deg).
@@ -472,8 +496,16 @@ impl<'a> Annotator<'a> {
         let at = |dx: f64, dy: f64| o + v2(dx, dy).rot(a);
         let mut v = Vec::new();
         let mut x = x0 + if dt.basic { 0.8 } else { 0.0 };
+        let wm = self.main_w(dt);
+        let sgn = if dt.line_y <= 0.0 { 1.0 } else { -1.0 };
+        // extra lines: under the main text, which moves up, when the line is below
+        let lift = if sgn > 0.0 { self.extra_h(dt) } else { 0.0 };
+        for (k, line) in dt.extra.iter().enumerate() {
+            let y = if sgn > 0.0 { lift - (k as f64 + 1.0) * 1.4 * h } else { -(k as f64 + 1.0) * 1.4 * h };
+            v.push(Prim::Text { p: at(x0, y), h, anchor: Anchor::Start, rot, s: line.clone(), cls: "dim" });
+        }
         // limits sit on the baseline with the other text centred on the stack
-        let ym = if dt.limits { h * 0.45 } else { 0.0 };
+        let ym = lift + if dt.limits { h * 0.45 } else { 0.0 };
         if !dt.main.is_empty() {
             v.push(Prim::Text { p: at(x, ym), h, anchor: Anchor::Start, rot, s: dt.main.clone(), cls: "dim" });
             x += text_width(&dt.main, h);
@@ -484,6 +516,7 @@ impl<'a> Annotator<'a> {
                 x += 0.8;
             }
             let (yu, yl) = if dt.limits { (h * 0.95, 0.0) } else { (h * 0.45, -h * 0.25) };
+            let (yu, yl) = (yu + lift, yl + lift);
             v.push(Prim::Text { p: at(x, yu), h: th, anchor: Anchor::Start, rot, s: p.clone(), cls: "dim" });
             v.push(Prim::Text { p: at(x, yl), h: th, anchor: Anchor::Start, rot, s: mi.clone(), cls: "dim" });
             x += text_width(p, th).max(text_width(mi, th));
@@ -492,20 +525,20 @@ impl<'a> Annotator<'a> {
             }
         }
         if dt.basic {
-            let (y0, y1) = (-0.7, h * 0.72 + 0.7);
-            let pts = [v2(x0, y0), v2(x0 + w, y0), v2(x0 + w, y1), v2(x0, y1)].iter().map(|q| at(q.x, q.y)).collect();
+            let (y0, y1) = (lift - 0.7, lift + h * 0.72 + 0.7);
+            let pts = [v2(x0, y0), v2(x0 + wm, y0), v2(x0 + wm, y1), v2(x0, y1)].iter().map(|q| at(q.x, q.y)).collect();
             v.push(Prim::Poly { pts, closed: true, cls: "thin" });
         }
         if dt.datum.is_none() && dt.frames.is_empty() {
             return v;
         }
-        let sgn = if dt.line_y <= 0.0 { 1.0 } else { -1.0 };
         let l = self.block_layout(dt, sgn);
-        let wt = w - if dt.datum.is_some() { 1.5 + self.datum_w(dt) } else { 0.0 };
+        // frames line up with the text (without the datum symbol), extra lines included
+        let wt = dt.extra.iter().map(|t| text_width(t, h)).fold(wm - if dt.datum.is_some() { 1.5 + self.datum_w(dt) } else { 0.0 }, f64::max);
         if let (Some(lbl), Some((near, far))) = (&dt.datum, l.datum) {
             // datum feature symbol beside the text, its triangle on the dimension line
             let s = self.datum_w(dt);
-            let cx = x0 + w - s / 2.0;
+            let cx = x0 + wm - s / 2.0;
             let hw = l.tri_h * 0.6;
             let apex = l.line_y + sgn * l.tri_h;
             v.push(Prim::Line { a: at(cx - hw - 1.0, l.line_y), b: at(cx + hw + 1.0, l.line_y), cls: "thin" });
@@ -646,23 +679,135 @@ impl<'a> Annotator<'a> {
     /// Build the annotations of a view; `base` is the JSON pointer of the
     /// view's spec.
     pub fn build(&mut self, ann: &Annotations, base: &str) {
-        // frames and datums that name a dimension go with that dimension
-        let mut dims = ann.dimensions.clone();
-        for g in ann.gdt.iter().filter(|g| g.dimension.is_some()) {
-            let id = g.dimension.as_deref().unwrap();
-            match dims.iter_mut().find(|d| d.id.as_deref() == Some(id)) {
-                Some(d) => d.gdt.push(g.clone()),
-                None => self.warnings.push(format!("GD&T frame: no dimension with id '{}'", id)),
-            }
-        }
-        // datums that name a frame go on that frame (one on the view's list or on a dimension)
+        // datums that name a frame go on that frame
         let mut gdts = ann.gdt.clone();
         for t in ann.datums.iter().filter(|t| t.gdt.is_some()) {
             let id = t.gdt.as_deref().unwrap();
-            let hit = gdts.iter_mut().filter(|g| g.dimension.is_none()).chain(dims.iter_mut().flat_map(|d| d.gdt.iter_mut())).find(|g| g.id.as_deref() == Some(id));
-            match hit {
+            match gdts.iter_mut().find(|g| g.id.as_deref() == Some(id)) {
                 Some(g) => g.datum = Some(t.label.clone()),
                 None => self.warnings.push(format!("datum {}: no GD&T frame with id '{}'", t.label, id)),
+            }
+        }
+        let src_of = |it: Item| match it {
+            Item::Dim(i) => format!("{}/dimensions/{}", base, i),
+            Item::Gdt(i) => format!("{}/gdt/{}", base, i),
+            Item::Note(i) => format!("{}/notes/{}", base, i),
+            Item::Thread(i) => format!("{}/threads/{}", base, i),
+        };
+        // merged items: frames, notes and thread callouts on the leader of another item
+        let mut ids: std::collections::HashMap<&str, Item> = std::collections::HashMap::new();
+        let all_items: Vec<(Item, Option<&str>)> = ann.dimensions.iter().enumerate().map(|(i, d)| (Item::Dim(i), d.id.as_deref()))
+            .chain(gdts.iter().enumerate().map(|(i, g)| (Item::Gdt(i), g.id.as_deref())))
+            .chain(ann.notes.iter().enumerate().map(|(i, n)| (Item::Note(i), n.id.as_deref())))
+            .chain(ann.threads.iter().enumerate().map(|(i, t)| (Item::Thread(i), t.id.as_deref())))
+            .collect();
+        for (it, id) in &all_items {
+            if let Some(id) = id.filter(|s| !s.is_empty()) {
+                ids.entry(id).or_insert(*it);
+            }
+        }
+        let merge_of = |it: Item| -> Option<&str> {
+            match it {
+                Item::Dim(_) => None,
+                Item::Gdt(i) => gdts[i].merge.as_deref().or(gdts[i].dimension.as_deref()),
+                Item::Note(i) => ann.notes[i].merge.as_deref(),
+                Item::Thread(i) => ann.threads[i].merge.as_deref(),
+            }
+            .filter(|s| !s.is_empty())
+        };
+        let mut head_of: std::collections::HashMap<Item, Item> = std::collections::HashMap::new();
+        for (it, _) in &all_items {
+            let Some(first) = merge_of(*it) else { continue };
+            let mut h = *it;
+            let mut next = Some(first);
+            let mut ok = true;
+            for _ in 0..16 {
+                let Some(id) = next else { break };
+                match ids.get(id) {
+                    Some(t) if *t == *it => {
+                        ok = false;
+                        break;
+                    }
+                    Some(t) => {
+                        h = *t;
+                        next = merge_of(h);
+                    }
+                    None => {
+                        self.warnings.push(format!("{}: nothing with id '{}' to merge with", src_of(*it), id));
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+            if ok && h != *it {
+                head_of.insert(*it, h);
+            }
+        }
+        // members of each head, in order: thread callouts, notes, frames
+        let mut members: Vec<(Item, Vec<Item>)> = Vec::new();
+        let order = |it: &Item| match it {
+            Item::Thread(i) => (0, *i),
+            Item::Note(i) => (1, *i),
+            Item::Gdt(i) => (2, *i),
+            Item::Dim(i) => (3, *i),
+        };
+        let mut ms: Vec<(&Item, &Item)> = head_of.iter().collect();
+        ms.sort_by_key(|(m, _)| order(m));
+        for (m, h) in ms {
+            match members.iter_mut().find(|(hh, _)| hh == h) {
+                Some((_, v)) => v.push(*m),
+                None => members.push((*h, vec![*m])),
+            }
+        }
+        let members_of = |h: Item| members.iter().find(|(hh, _)| *hh == h).map(|(_, v)| v.clone()).unwrap_or_default();
+        let mut extra_attrs: Vec<(String, &'static str, String)> = Vec::new();
+        for (h, v) in &members {
+            extra_attrs.push((src_of(*h), "data-members", v.iter().map(|m| src_of(*m)).collect::<Vec<_>>().join(" ")));
+        }
+        // the feature each item is on (for the editor's "merge with")
+        for (it, _) in &all_items {
+            let sel = match *it {
+                Item::Dim(i) => {
+                    let d = &ann.dimensions[i];
+                    if matches!(d.kind.to_ascii_lowercase().as_str(), "diameter" | "radius") { d.of.clone() } else { None }
+                }
+                Item::Gdt(i) => Some(gdts[i].attach.clone()),
+                Item::Note(i) => ann.notes[i].attach.clone(),
+                Item::Thread(i) => Some(ann.threads[i].of.clone()),
+            };
+            if let Some(k) = sel.filter(|s| !s.is_empty()).and_then(|s| self.feat_key(&s)) {
+                extra_attrs.push((src_of(*it), "data-feat", k));
+            }
+        }
+        // threads merged elsewhere: drawn now, their callout text kept
+        let mut thread_text: std::collections::HashMap<usize, Option<String>> = std::collections::HashMap::new();
+        for (i, t) in ann.threads.iter().enumerate() {
+            if head_of.contains_key(&Item::Thread(i)) || members.iter().any(|(h, _)| *h == Item::Thread(i)) {
+                let (d0, g0) = (self.dims.len(), self.gdt.len());
+                let txt = self.thread(t, true);
+                self.tag_from(d0, g0, &src_of(Item::Thread(i)));
+                thread_text.insert(i, txt);
+            }
+        }
+        let text_lines = |it: Item, thread_text: &std::collections::HashMap<usize, Option<String>>| -> Vec<String> {
+            match it {
+                Item::Note(i) => wrap_text(&ann.notes[i].text),
+                Item::Thread(i) => thread_text.get(&i).cloned().flatten().into_iter().collect(),
+                _ => vec![],
+            }
+        };
+        let mut dims = ann.dimensions.clone();
+        for (h, v) in &members {
+            if let Item::Dim(i) = h {
+                for m in v {
+                    match m {
+                        Item::Gdt(g) => dims[*i].gdt.push(gdts[*g].clone()),
+                        _ => {
+                            let l = text_lines(*m, &thread_text);
+                            dims[*i].extra.extend(l);
+                        }
+                    }
+                }
             }
         }
         for t in ann.datums.iter().filter(|t| t.dimension.is_some()) {
@@ -679,8 +824,8 @@ impl<'a> Annotator<'a> {
                     d.id.as_deref().unwrap_or(&d.kind)
                 ));
             }
-            if d.kind.eq_ignore_ascii_case("ordinate") && (!d.gdt.is_empty() || d.datum.is_some()) {
-                self.warnings.push("GD&T frames and datums cannot be attached to ordinate dimensions".into());
+            if d.kind.eq_ignore_ascii_case("ordinate") && (!d.gdt.is_empty() || d.datum.is_some() || !d.extra.is_empty()) {
+                self.warnings.push("GD&T frames, datums and merged notes cannot be attached to ordinate dimensions".into());
             }
         }
         let mut lins: Vec<Lin> = Vec::new();
@@ -721,17 +866,140 @@ impl<'a> Annotator<'a> {
         for (i, t) in ann.datum_targets.iter().enumerate() {
             self.tagged(format!("{}/datum_targets/{}", base, i), |a| a.datum_target(t));
         }
-        for (i, g) in gdts.iter().enumerate().filter(|g| g.1.dimension.is_none()) {
-            self.tagged(format!("{}/gdt/{}", base, i), |a| a.frame(g));
+        // a merged callout on a frame, note or thread: the head's text first,
+        // then the members' lines, then the frames
+        let callout = |a: &mut Self, h: Item, own: Vec<String>, own_frame: Option<GdtSpec>, attach: &str, around: bool| {
+            let mut lines = own;
+            let mut frames: Vec<GdtSpec> = own_frame.into_iter().collect();
+            for m in members_of(h) {
+                match m {
+                    Item::Gdt(g) => frames.push(gdts[g].clone()),
+                    _ => lines.extend(text_lines(m, &thread_text)),
+                }
+            }
+            a.tagged(src_of(h), |a| a.callout(&src_of(h), attach, lines, &frames, around));
+        };
+        for (i, g) in gdts.iter().enumerate() {
+            let it = Item::Gdt(i);
+            // merged elsewhere (or on a dimension id that isn't there: warned above)
+            if head_of.contains_key(&it) || (g.merge.is_none() && g.dimension.is_some()) {
+                continue;
+            }
+            if members.iter().any(|(h, _)| *h == it) {
+                callout(self, it, vec![], Some(g.clone()), &g.attach, g.all_around);
+            } else {
+                self.tagged(src_of(it), |a| a.frame(g));
+            }
         }
         for w in self.tol_warn.take() {
             if !self.warnings.contains(&w) {
                 self.warnings.push(w);
             }
         }
-        for (i, n) in ann.notes.iter().enumerate() {
-            self.tagged(format!("{}/notes/{}", base, i), |a| a.note(n));
+        for (i, t) in ann.threads.iter().enumerate() {
+            let it = Item::Thread(i);
+            if head_of.contains_key(&it) {
+                continue;
+            }
+            if members.iter().any(|(h, _)| *h == it) {
+                let own = thread_text.get(&i).cloned().flatten().into_iter().collect();
+                callout(self, it, own, None, &t.of, false);
+            } else {
+                self.tagged(src_of(it), |a| {
+                    a.thread(t, false);
+                });
+            }
         }
+        for (i, n) in ann.notes.iter().enumerate() {
+            let it = Item::Note(i);
+            if head_of.contains_key(&it) {
+                continue;
+            }
+            match n.attach.as_deref().filter(|s| !s.is_empty()) {
+                Some(at) if members.iter().any(|(h, _)| *h == it) => callout(self, it, wrap_text(&n.text), None, at, false),
+                _ => {
+                    if members.iter().any(|(h, _)| *h == it) {
+                        self.warnings.push(format!("note '{}': give it \"attach\" to merge other items onto its leader", n.text));
+                    }
+                    self.tagged(src_of(it), |a| a.note(n));
+                }
+            }
+        }
+        for w in self.tol_warn.take() {
+            if !self.warnings.contains(&w) {
+                self.warnings.push(w);
+            }
+        }
+        // editor hints on the groups: members merged onto a leader, the feature an item is on
+        for p in self.dims.iter_mut().chain(self.gdt.iter_mut()) {
+            if let Prim::Group { attrs, .. } = p
+                && let Some(src) = attrs.iter().find(|a| a.0 == "data-src").map(|a| a.1.clone())
+            {
+                for (s, k, v) in &extra_attrs {
+                    if *s == src && !attrs.iter().any(|a| a.0 == *k) {
+                        attrs.push((k, v.clone()));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Key of the feature a selector picks: holes / shafts by their axis
+    /// (coaxial features match), planes by their plane, others by position.
+    fn feat_key(&self, sel: &str) -> Option<String> {
+        let r = resolve(self.m, sel).ok()?;
+        let g = r.first()?;
+        let f = |v: f64| format!("{:.3}", (v * 1000.0).round() / 1000.0 + 0.0);
+        let canon = |a: V3| if a.x < -1e-9 || (a.x.abs() <= 1e-9 && (a.y < -1e-9 || (a.y.abs() <= 1e-9 && a.z < 0.0))) { a * -1.0 } else { a };
+        let v3s = |a: V3| format!("{},{},{}", f(a.x), f(a.y), f(a.z));
+        if let Some(c) = &g.circ {
+            let a = canon(c.axis.norm());
+            let p = c.c - a * c.c.dot(a);
+            return Some(format!("axis:{}:{}", v3s(a), v3s(p)));
+        }
+        if let Some(n) = g.plane_n {
+            let n = canon(n.norm());
+            return Some(format!("plane:{}:{}", v3s(n), f(g.rep.dot(n))));
+        }
+        if let Some((a, b)) = g.line {
+            let (a, b) = if v3s(a) <= v3s(b) { (a, b) } else { (b, a) };
+            return Some(format!("line:{}:{}", v3s(a), v3s(b)));
+        }
+        Some(format!("point:{}", v3s(g.rep)))
+    }
+
+    /// Text lines and frames stacked on one leader to the feature `attach`.
+    fn callout(&mut self, what: &str, attach: &str, lines: Vec<String>, frames: &[GdtSpec], around: bool) {
+        let Some(r) = self.attach_ref(attach) else { return };
+        let mut it = lines.into_iter();
+        let mut dt = DimText {
+            main: it.next().unwrap_or_default(),
+            plus: None,
+            minus: None,
+            limits: false,
+            tail: String::new(),
+            basic: false,
+            frames: vec![],
+            datum: None,
+            line_y: -1.0,
+            extra: it.collect(),
+        };
+        for g in frames {
+            let (prims, w, warns) = self.build_frame(g);
+            self.tol_warn.borrow_mut().extend(warns);
+            dt.frames.push((prims, w, g.datum.clone().filter(|d| !d.is_empty())));
+        }
+        let mut prims = self.text_prims(&dt, V2::default(), 0.0, Anchor::Start);
+        let b = bbox_of(&prims);
+        if b.width() <= 0.0 {
+            return;
+        }
+        // left-middle of the block at the origin, with a little margin
+        let d = v2(0.8 - b.min.x, -b.center().y);
+        for p in prims.iter_mut() {
+            p.translate(d);
+        }
+        self.emit_leadered(&format!("merged callout {}", what), &r, None, prims, b.width() + 1.6, b.height() + 1.6, Term::Arrow, around);
     }
 
     fn prep_linear(&mut self, d: &DimSpec, lins: &mut Vec<Lin>) {
@@ -1753,22 +2021,143 @@ impl<'a> Annotator<'a> {
         self.gdt.push(g);
     }
 
+    /// Cosmetic thread: ISO 6410 conventions. End-on, a thin 3/4 circle (at the
+    /// major diameter in a hole, the minor on a shaft); side-on, thin lines
+    /// along the thread and a thick line where it ends. Hidden internal
+    /// threads are dashed (when the view draws hidden lines).
+    /// Draws the thread and its callout on its own leader (unless
+    /// `merged`); returns the callout text (None when there is no callout).
+    fn thread(&mut self, t: &ThreadSpec, merged: bool) -> Option<String> {
+        let sel = match select(self.m, &t.of) {
+            Ok(s) => s,
+            Err(e) => {
+                self.warnings.push(format!("thread: {}", e));
+                return None;
+            }
+        };
+        // the cylindrical faces picked (an edge stands for its cylinders)
+        let faces: Vec<usize> = match sel.kind {
+            Kind::Face => sel.ids.clone(),
+            Kind::Edge => sel.ids.iter().flat_map(|&e| self.m.edges[e].faces.iter().copied()).collect(),
+            Kind::Vertex => vec![],
+        };
+        let all = cylinders(self.m);
+        let mut picked: Vec<usize> = (0..all.len()).filter(|&i| all[i].faces.iter().any(|f| faces.contains(f))).collect();
+        if picked.is_empty() {
+            self.warnings.push(format!("thread: {} has no cylindrical face", t.of));
+            return None;
+        }
+        if t.all_alike {
+            let c0 = &all[picked[0]];
+            picked = (0..all.len())
+                .filter(|&i| {
+                    let c = &all[i];
+                    (c.r - c0.r).abs() < 1e-3 && c.internal == c0.internal && c.z.dot(c0.z).abs() > 0.9999 && ((c.t1 - c.t0) - (c0.t1 - c0.t0)).abs() < 1e-2
+                })
+                .collect();
+        }
+        let c0 = all[picked[0]].clone();
+        let internal = match t.kind.as_deref().map(|k| k.to_ascii_lowercase()) {
+            Some(k) if k.starts_with("int") => true,
+            Some(k) if k.starts_with("ext") => false,
+            _ => c0.internal,
+        };
+        // major diameter and pitch
+        let (size_major, size_pitch) = t.size.as_deref().and_then(parse_thread_size).map_or((None, None), |(d, p)| (Some(d), p));
+        let major = t.major.or(size_major).unwrap_or(if internal { 0.0 } else { 2.0 * c0.r });
+        if major <= 0.0 {
+            self.warnings.push(format!("thread on {}: give \"size\" (e.g. \"M6\") or \"major\"", t.of));
+            return None;
+        }
+        let pitch = t.pitch.or(size_pitch).or_else(|| coarse_pitch(major)).unwrap_or(major * 0.15);
+        if internal && 2.0 * c0.r > major - 1e-6 {
+            self.warnings.push(format!("thread on {}: the hole (Ø{}) is not smaller than the thread (Ø{}); model tapped holes at the tap drill size", t.of, fmt_num(2.0 * c0.r, 3, true), fmt_num(major, 3, true)));
+        }
+        // thin line: major diameter in a hole, minor on a shaft
+        let r_thin = if internal { major / 2.0 } else { (major - 1.2269 * pitch) / 2.0 };
+        let r_major = major / 2.0;
+        let s = self.pr.scale;
+        let d = self.pr.d;
+        let mut prims = Vec::new();
+        for &i in &picked {
+            let c = &all[i];
+            // the thread starts at the open end; through: the end higher in the model (+Z, then +Y, +X)
+            let (open0, open1) = (cyl_end_open(self.m, c, false), cyl_end_open(self.m, c, true));
+            let up = |v: V3| if v.z.abs() > 1e-6 { v.z } else if v.y.abs() > 1e-6 { v.y } else { v.x };
+            let from_top = if open0 && open1 { up(c.z) > 0.0 } else { open1 || !open0 };
+            let len = c.t1 - c.t0;
+            let depth = t.depth.unwrap_or(len).clamp(0.0, len);
+            let (ta, tb) = if from_top { (c.t1, c.t1 - depth) } else { (c.t0, c.t0 + depth) };
+            let full = depth >= len - 1e-6;
+            let zd = c.z.dot(d);
+            if zd.abs() > 0.999 {
+                // end-on: drawn when the thread's open end faces the viewer
+                let faces_viewer = if from_top { zd > 0.0 } else { zd < 0.0 };
+                if !faces_viewer && !(full && open0 && open1) {
+                    continue;
+                }
+                let cc = self.pr.p(c.o);
+                let r2 = r_thin * s;
+                // 3/4 circle, open in the upper right quadrant (as seen on the sheet)
+                let pts: Vec<V2> = (0..=54).map(|k| cc + V2::from_angle((90.0 + 270.0 * k as f64 / 54.0).to_radians()) * r2).collect();
+                prims.push(Prim::Poly { pts, closed: false, cls: "thin" });
+            } else if zd.abs() < 0.01 {
+                // side-on
+                let a = self.pr.p(c.o + c.z * ta);
+                let b = self.pr.p(c.o + c.z * tb);
+                if a.dist(b) < 1e-6 {
+                    continue;
+                }
+                let n = (b - a).norm().perp();
+                let cut = self.clip.as_ref().is_some_and(|cl| cl.d.dot(c.z).abs() < 1e-6 && (c.o - cl.c).dot(cl.d).abs() < c.r);
+                let (cls, end_cls) = if !internal || cut {
+                    ("thin", "visible")
+                } else if self.hidden {
+                    ("hidden", "hidden")
+                } else {
+                    continue;
+                };
+                for k in [-1.0, 1.0] {
+                    prims.push(Prim::Line { a: a + n * (k * r_thin * s), b: b + n * (k * r_thin * s), cls });
+                }
+                if !full || !internal {
+                    // thread end, across the major diameter
+                    let rr = if internal { r_major } else { c.r.max(r_major) };
+                    prims.push(Prim::Line { a: b + n * (-rr * s), b: b + n * (rr * s), cls: end_cls });
+                }
+            }
+        }
+        if !prims.is_empty() {
+            self.dims.push(ann("thread", vec![], vec![], vec![role("static", prims)]));
+        }
+        // callout
+        if t.callout.unwrap_or(true) {
+            let n = picked.len();
+            let desig = match &t.size {
+                Some(sz) => sz.trim().to_string(),
+                None => format!("Ø{}", fmt_num(major, 3, true)),
+            };
+            let through = cyl_end_open(self.m, &c0, false) && cyl_end_open(self.m, &c0, true);
+            let len = c0.t1 - c0.t0;
+            let tail = match t.depth {
+                Some(dp) if dp < len - 1e-6 => format!(" x {} DEEP", fmt_num(dp, 2, true)),
+                _ if internal && through => " THRU".to_string(),
+                _ if internal => format!(" x {} DEEP", fmt_num(len, 2, true)),
+                _ => String::new(),
+            };
+            let text = t.text.clone().unwrap_or_else(|| format!("{}{}{}", if n > 1 { format!("{}X ", n) } else { String::new() }, desig, tail));
+            if !merged {
+                let note = NoteSpec { text: text.clone(), attach: Some(t.of.clone()), boxed: false, ..Default::default() };
+                self.note(&note);
+            }
+            return Some(text);
+        }
+        None
+    }
+
     fn note(&mut self, n: &NoteSpec) {
         let h = self.h();
-        let mut lines: Vec<String> = Vec::new();
-        for para in n.text.split('\n') {
-            let mut cur = String::new();
-            for word in para.split_whitespace() {
-                if !cur.is_empty() && cur.len() + word.len() + 1 > 48 {
-                    lines.push(std::mem::take(&mut cur));
-                }
-                if !cur.is_empty() {
-                    cur.push(' ');
-                }
-                cur.push_str(word);
-            }
-            lines.push(cur);
-        }
+        let lines = wrap_text(&n.text);
         let text = lines.join("\n");
         let w = lines.iter().map(|l| text_width(l, h)).fold(0.0, f64::max) + 3.0;
         let ht = h + (lines.len() as f64 - 1.0) * 1.4 * h + 3.0;
@@ -1807,6 +2196,34 @@ impl<'a> Annotator<'a> {
         self.obst.push(b.expand(0.5));
         self.gdt.push(ann("free", vec![], vec![], vec![role("sym", prims)]));
     }
+}
+
+/// An annotation of a view, by list and index.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum Item {
+    Dim(usize),
+    Gdt(usize),
+    Note(usize),
+    Thread(usize),
+}
+
+/// Note text in lines of up to 48 characters (breaking at spaces and at "\n").
+fn wrap_text(text: &str) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    for para in text.split('\n') {
+        let mut cur = String::new();
+        for word in para.split_whitespace() {
+            if !cur.is_empty() && cur.len() + word.len() + 1 > 48 {
+                lines.push(std::mem::take(&mut cur));
+            }
+            if !cur.is_empty() {
+                cur.push(' ');
+            }
+            cur.push_str(word);
+        }
+        lines.push(cur);
+    }
+    lines
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1979,4 +2396,101 @@ pub fn gdt_symbol(name: &str, c: V2, s: f64) -> Vec<Prim> {
         }
         _ => vec![],
     }
+}
+
+/// A cylinder of the model: its faces (a hole is often split in two), axis,
+/// radius, extent along the axis and whether it is a hole.
+#[derive(Clone, Debug)]
+struct Cyl {
+    faces: Vec<usize>,
+    o: V3,
+    z: V3,
+    r: f64,
+    t0: f64,
+    t1: f64,
+    internal: bool,
+}
+
+/// The model's cylinders, coaxial faces of the same radius merged.
+fn cylinders(m: &Model) -> Vec<Cyl> {
+    let mut out: Vec<Cyl> = Vec::new();
+    for (fi, f) in m.faces.iter().enumerate() {
+        let SurfKind::Cylinder { r } = f.surf.kind else { continue };
+        let (o, z) = (f.surf.fr.o, f.surf.fr.z.norm());
+        let ts: Vec<f64> = f.loop_pts.iter().flatten().map(|p| (*p - o).dot(z)).collect();
+        if ts.is_empty() {
+            continue;
+        }
+        let (t0, t1) = (ts.iter().copied().fold(f64::MAX, f64::min), ts.iter().copied().fold(f64::MIN, f64::max));
+        // material outside the surface (normal towards the axis): a hole
+        let internal = !f.same_sense;
+        let near = |c: &Cyl| {
+            let w = o - c.o;
+            (c.r - r).abs() < 1e-4 && c.z.cross(z).len() < 1e-6 && (w - c.z * w.dot(c.z)).len() < 1e-4 && c.internal == internal
+        };
+        if let Some(c) = out.iter_mut().find(|c| near(c)) {
+            let (a, b) = ((o + z * t0 - c.o).dot(c.z), (o + z * t1 - c.o).dot(c.z));
+            c.t0 = c.t0.min(a.min(b));
+            c.t1 = c.t1.max(a.max(b));
+            c.faces.push(fi);
+        } else {
+            out.push(Cyl { faces: vec![fi], o, z, r, t0, t1, internal });
+        }
+    }
+    out
+}
+
+/// Is the cylinder open at its +axis end (`top`) or its -axis end: does it
+/// end on a face looking outwards there (or widen into a countersink)?
+fn cyl_end_open(m: &Model, c: &Cyl, top: bool) -> bool {
+    let (t, s) = if top { (c.t1, c.z) } else { (c.t0, -c.z) };
+    for &fi in &c.faces {
+        for &ei in &m.faces[fi].edges {
+            let e = &m.edges[ei];
+            if !e.pts.iter().all(|p| ((*p - c.o).dot(c.z) - t).abs() < 1e-3) {
+                continue;
+            }
+            for &g in e.faces.iter().filter(|g| !c.faces.contains(g)) {
+                let gf = &m.faces[g];
+                match gf.surf.kind {
+                    SurfKind::Plane => {
+                        if gf.plane_normal().is_some_and(|n| n.dot(s) > 0.5) {
+                            return true;
+                        }
+                    }
+                    SurfKind::Cone { .. } => {
+                        // widening: a countersink or chamfer at the mouth
+                        let far = gf.loop_pts.iter().flatten().map(|p| {
+                            let w = *p - c.o;
+                            (w - c.z * w.dot(c.z)).len()
+                        });
+                        if far.fold(0.0, f64::max) > c.r * 1.01 {
+                            return true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    false
+}
+
+/// "M10x1.25" -> (10, Some(1.25)); "M6" -> (6, None).
+fn parse_thread_size(s: &str) -> Option<(f64, Option<f64>)> {
+    let t = s.trim().trim_start_matches(['M', 'm']);
+    let mut it = t.splitn(2, ['x', 'X', '×']);
+    let d: f64 = it.next()?.trim().parse().ok()?;
+    let p = it.next().and_then(|p| p.trim().split_whitespace().next()?.parse().ok());
+    Some((d, p))
+}
+
+/// ISO coarse pitch for a metric major diameter.
+fn coarse_pitch(d: f64) -> Option<f64> {
+    const T: [(f64, f64); 26] = [
+        (1.0, 0.25), (1.2, 0.25), (1.6, 0.35), (2.0, 0.4), (2.5, 0.45), (3.0, 0.5), (4.0, 0.7), (5.0, 0.8), (6.0, 1.0), (8.0, 1.25),
+        (10.0, 1.5), (12.0, 1.75), (14.0, 2.0), (16.0, 2.0), (18.0, 2.5), (20.0, 2.5), (22.0, 2.5), (24.0, 3.0), (27.0, 3.0), (30.0, 3.5),
+        (33.0, 3.5), (36.0, 4.0), (42.0, 4.5), (48.0, 5.0), (56.0, 5.5), (64.0, 6.0),
+    ];
+    T.iter().find(|t| (t.0 - d).abs() < 1e-6).map(|t| t.1)
 }

@@ -7,7 +7,9 @@ use crate::svg::{text_width, Anchor, Prim};
 use std::cell::Cell;
 
 pub const TB_W: f64 = 180.0;
-pub const TB_H: f64 = 62.0;
+/// General tolerance text when the title block doesn't give one.
+pub const DEFAULT_GENERAL_TOL: &str = "UNLESS STATED:  X.X ±0.4    X.XX ±0.15    ANGLES ±0.5°";
+pub const TB_H: f64 = 72.0;
 
 /// Size of the sheet being drawn.
 #[derive(Clone, Copy, Debug)]
@@ -148,7 +150,8 @@ pub fn title_block(cfg: &Config, tb: &TitleBlock, scale: &str, proj: Projection)
     let mut v = vec![Prim::Rect { b, cls: "border" }];
     // cell: (x, y, w, h, label, value, value height)
     let mut cells: Vec<(f64, f64, f64, f64, &str, String, f64)> = vec![
-        (0.0, 0.0, 130.0, 12.0, "DRAWING No.", tb.drawing_number.clone(), 5.0),
+        (0.0, 0.0, 105.0, 12.0, "DRAWING No.", tb.drawing_number.clone(), 5.0),
+        (105.0, 0.0, 25.0, 12.0, "ISSUE", tb.issue.clone(), 5.0),
         (130.0, 0.0, 25.0, 12.0, "REV", tb.revision.clone(), 5.0),
         (155.0, 0.0, 25.0, 12.0, "SIZE", get().name.into(), 5.0),
         (0.0, 12.0, 60.0, 9.0, "DRAWN BY", tb.drawn_by.clone(), th),
@@ -158,8 +161,9 @@ pub fn title_block(cfg: &Config, tb: &TitleBlock, scale: &str, proj: Projection)
         (0.0, 21.0, 180.0, 10.0, "DESCRIPTION", tb.description.clone(), 4.0),
         (0.0, 31.0, 90.0, 9.0, "MATERIAL", tb.material.clone(), th),
         (90.0, 31.0, 90.0, 9.0, "FINISH", tb.finish.clone(), th),
+        (0.0, 40.0, 180.0, 10.0, "GENERAL TOLERANCES", String::new(), th),
     ];
-    cells.push((0.0, 40.0, 135.0, 22.0, "NOTES", String::new(), th));
+    cells.push((0.0, 50.0, 135.0, 22.0, "NOTES", String::new(), th));
     for (cx, cy, w, h, label, value, vh) in &cells {
         let cb = BBox2::new(v2(x0 + cx, y0 + cy), v2(x0 + cx + w, y0 + cy + h));
         v.push(Prim::Rect { b: cb, cls: "thin" });
@@ -175,12 +179,22 @@ pub fn title_block(cfg: &Config, tb: &TitleBlock, scale: &str, proj: Projection)
             });
         }
     }
+    // general tolerances: parts separated by two or more spaces go in columns
+    let gt = tb.general_tolerances.clone().unwrap_or_else(|| DEFAULT_GENERAL_TOL.into());
+    let parts: Vec<&str> = gt.split("  ").map(str::trim).filter(|p| !p.is_empty()).collect();
+    let gy = y0 + 40.0 + (10.0 - lh - 1.0 - th) / 2.0 + 0.2 * th;
+    let first_w = parts.first().map_or(0.0, |p| text_width(p, th));
+    let col = if parts.len() > 1 { (TB_W - 6.0 - first_w) / (parts.len() - 1) as f64 } else { 0.0 };
+    for (i, part) in parts.iter().enumerate() {
+        let x = if i == 0 { x0 + 2.0 } else { x0 + 6.0 + first_w + col * (i - 1) as f64 };
+        v.push(Prim::Text { p: v2(x, gy), h: th, anchor: Anchor::Start, rot: 0.0, s: part.to_string(), cls: "value" });
+    }
     // notes text (wrapped)
     let nh = 2.5;
     let lines = wrap(&tb.notes, nh, 131.0);
     for (i, l) in lines.iter().take(6).enumerate() {
         v.push(Prim::Text {
-            p: v2(x0 + 2.0, y0 + 62.0 - 1.0 - lh - 1.5 - nh - i as f64 * nh * 1.35),
+            p: v2(x0 + 2.0, y0 + TB_H - 1.0 - lh - 1.5 - nh - i as f64 * nh * 1.35),
             h: nh,
             anchor: Anchor::Start,
             rot: 0.0,
@@ -189,7 +203,7 @@ pub fn title_block(cfg: &Config, tb: &TitleBlock, scale: &str, proj: Projection)
         });
     }
     // projection symbol cell
-    let pb = BBox2::new(v2(x0 + 135.0, y0 + 40.0), v2(x0 + 180.0, y0 + 62.0));
+    let pb = BBox2::new(v2(x0 + 135.0, y0 + 50.0), v2(x0 + 180.0, y0 + TB_H));
     v.push(Prim::Rect { b: pb, cls: "thin" });
     let label = match proj {
         Projection::Third => "THIRD ANGLE",

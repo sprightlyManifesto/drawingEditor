@@ -32,16 +32,16 @@
       "dimensions": [
         {
           "type": "linear",
-          "from": "faces(\"<X\")",
-          "to": "faces(\">X\")",
+          "from": "faces('<X')",
+          "to": "faces('>X')",
           "direction": "horizontal",
           "side": "above",
           "tolerance": 0.1
         },
         {
           "type": "linear",
-          "from": "faces(\"<X[-2]\")",
-          "to": "faces(\">X\")",
+          "from": "faces('<X[-2]')",
+          "to": "faces('>X')",
           "direction": "horizontal",
           "side": "left",
           "tolerance": {
@@ -51,31 +51,31 @@
         },
         {
           "type": "ordinate",
-          "origin": "vertices(\"<X and <Y\")",
+          "origin": "vertices('<X and <Y')",
           "direction": "x",
           "side": "below",
           "targets": [
-            "faces(\"%CYLINDER\").faces(\"<Y\")",
-            "faces(\">Z\").faces(\">(0.86603,0.5,0)\")"
+            "faces('%CYLINDER').faces('<Y')",
+            "faces('>Z').faces('>(0.86603,0.5,0)')"
           ],
           "tolerance": "basic"
         },
         {
           "type": "ordinate",
-          "origin": "vertices(\"<X and <Y\")",
+          "origin": "vertices('<X and <Y')",
           "direction": "y",
           "side": "right",
           "targets": [
-            "faces(\"%CYLINDER\").faces(\"<Y\")",
-            "faces(\"%CYLINDER\").faces(\"<Y[1]\")",
-            "faces(\">Z\").faces(\">(0.86603,0.5,0)\")",
-            "faces(\"%CYLINDER\").faces(\"<X[2]\").faces(\">Y\")"
+            "faces('%CYLINDER').faces('<Y')",
+            "faces('%CYLINDER').faces('<Y[1]')",
+            "faces('>Z').faces('>(0.86603,0.5,0)')",
+            "faces('%CYLINDER').faces('<X[2]').faces('>Y')"
           ],
           "tolerance": "basic"
         },
         {
           "type": "diameter",
-          "of": "faces(\"%CYLINDER\").faces(\"<X[2]\").faces(\">Y\")",
+          "of": "faces('%CYLINDER').faces('<X[2]').faces('>Y')",
           "text": "2X Ø<> THRU",
           "tolerance": {
             "type": "limits",
@@ -98,7 +98,7 @@
         },
         {
           "type": "diameter",
-          "of": "faces(\"%CYLINDER\").faces(\"<Y[1]\")",
+          "of": "faces('%CYLINDER').faces('<Y[1]')",
           "text": "Ø<> x 5 DEEP",
           "tolerance": {
             "type": "symmetric",
@@ -109,8 +109,8 @@
         {
           "type": "linear",
           "direction": "vertical",
-          "from": "faces(\"+Y\").faces(\"<Y\")",
-          "to": "faces(\"-Y\").faces(\">Y\")",
+          "from": "faces('+Y').faces('<Y')",
+          "to": "faces('-Y').faces('>Y')",
           "tolerance": {
             "type": "asymmetric",
             "plus": 0.2,
@@ -119,70 +119,71 @@
         },
         {
           "type": "angle",
-          "from": "faces(\">X\")",
-          "to": "faces(\"+(0.86603,0.5,0)\").faces(\">(0.86603,0.5,0)\")"
+          "from": "faces('>X')",
+          "to": "faces('+(0.86603,0.5,0)').faces('>(0.86603,0.5,0)')"
         }
       ],
       "gdt": [],
       "datums": [
         {
           "label": "B",
-          "attach": "faces(\"<X\")"
+          "attach": "faces('<X')"
         },
         {
           "label": "C",
-          "attach": "faces(\"<Y\")"
+          "attach": "faces('<Y')"
         }
       ],
       "details": [
         {
           "label": "D",
-          "center": "faces(\">Z\").faces(\">(0.86603,0.5,0)\")",
+          "center": "faces('>Z').faces('>(0.86603,0.5,0)')",
           "radius": 24,
           "scale": 1.5,
           "dimensions": [
             {
               "type": "linear",
               "direction": "aligned",
-              "from": "faces(\"+(-0.86603,-0.5,0)\").faces(\">(0.86603,0.5,0)\")",
-              "to": "faces(\"+(0.86603,0.5,0)\").faces(\"<(0.86603,0.5,0)\")"
+              "from": "faces('+(-0.86603,-0.5,0)').faces('>(0.86603,0.5,0)')",
+              "to": "faces('+(0.86603,0.5,0)').faces('<(0.86603,0.5,0)')"
             },
             {
               "type": "linear",
               "direction": "aligned",
-              "from": "faces(\"+(0.5,-0.86603,0)\").faces(\">(-0.5,0.86603,0)\")",
-              "to": "faces(\"+(-0.5,0.86603,0)\").faces(\"<(-0.5,0.86603,0)\")"
+              "from": "faces('+(0.5,-0.86603,0)').faces('>(-0.5,0.86603,0)')",
+              "to": "faces('+(-0.5,0.86603,0)').faces('<(-0.5,0.86603,0)')"
             },
             {
               "type": "linear",
               "direction": "aligned",
-              "from": "faces(\"+(0.86603,0.5,0)\").faces(\">(0.86603,0.5,0)\")",
-              "to": "faces(\"+(-0.86603,-0.5,0)\").faces(\"<(0.86603,0.5,0)\")"
+              "from": "faces('+(0.86603,0.5,0)').faces('>(0.86603,0.5,0)')",
+              "to": "faces('+(-0.86603,-0.5,0)').faces('<(0.86603,0.5,0)')"
             },
             {
               "type": "linear",
               "direction": "aligned",
-              "from": "faces(\"+(-0.5,0.86603,0)\").faces(\">(-0.5,0.86603,0)\")",
-              "to": "faces(\"+(0.5,-0.86603,0)\").faces(\"<(-0.5,0.86603,0)\")"
+              "from": "faces('+(-0.5,0.86603,0)').faces('>(-0.5,0.86603,0)')",
+              "to": "faces('+(0.5,-0.86603,0)').faces('<(-0.5,0.86603,0)')"
             },
             {
               "type": "radius",
-              "of": "faces(\"%CYLINDER\").faces(\">Y\")",
+              "of": "faces('%CYLINDER').faces('>Y')",
               "text": "R<> TYP"
             }
-          ]
+          ],
+          "location": [305.98, 304.16]
         }
       ],
       "sections": [
         {
           "label": "A",
           "position": "bottom",
-          "through": "faces(\"%CYLINDER\").faces(\"<Y[5]\").faces(\">X\")",
+          "through": "faces('%CYLINDER').faces('<Y[5]').faces('>X')",
           "dimensions": [
             {
               "type": "linear",
-              "from": "faces(\"<Z\")",
-              "to": "faces(\">Z\")",
+              "from": "faces('<Z')",
+              "to": "faces('>Z')",
               "direction": "vertical",
               "side": "left",
               "tolerance": {
@@ -192,7 +193,7 @@
             },
             {
               "type": "diameter",
-              "of": "faces(\"%CYLINDER\").faces(\"<Y[5]\").faces(\">X\")",
+              "of": "faces('%CYLINDER').faces('<Y[5]').faces('>X')",
               "tolerance": {
                 "type": "limits",
                 "plus": 0,
@@ -202,17 +203,17 @@
             },
             {
               "type": "angle",
-              "from": "faces(\"<Z\")",
-              "to": "faces(\"+(-0.17365,0,0.98481)\")"
+              "from": "faces('<Z')",
+              "to": "faces('+(-0.17365,0,0.98481)')"
             },
             {
               "type": "radius",
-              "of": "faces(\"%CYLINDER\").faces(\"<X\")"
+              "of": "faces('%CYLINDER').faces('<X')"
             }
           ],
           "gdt": [
             {
-              "attach": "faces(\"<Z\")",
+              "attach": "faces('<Z')",
               "characteristic": "flatness",
               "tolerance": 0.05
             },
@@ -230,18 +231,18 @@
           "datums": [
             {
               "label": "A",
-              "attach": "faces(\"<Z\")"
+              "attach": "faces('<Z')"
             }
           ],
           "notes": [
             {
               "text": "3 x 45°",
-              "attach": "faces(\"+(0.70711,0,0.70711)\")",
+              "attach": "faces('+(0.70711,0,0.70711)')",
               "boxed": false
             },
             {
               "text": "POCKET 20 SQ x 5 DEEP WITH Ø10 BOSS, SQUARE TO FLOOR",
-              "attach": "faces(\"+(-0.17365,0,0.98481)\")",
+              "attach": "faces('+(-0.17365,0,0.98481)')",
               "boxed": false
             }
           ]
@@ -249,30 +250,62 @@
         {
           "label": "B",
           "position": "right",
-          "through": "faces(\">Z\").faces(\">(0.86603,0.5,0)\")",
+          "through": "faces('>Z').faces('>(0.86603,0.5,0)')",
           "dimensions": [
             {
               "type": "linear",
-              "from": "faces(\"+Z\").faces(\"<Z\").faces(\">X\")",
-              "to": "faces(\">Z\")",
+              "from": "faces('+Z').faces('<Z').faces('>X')",
+              "to": "faces('>Z')",
               "direction": "horizontal"
+            }
+          ],
+          "projected": [
+            {
+              "position": "right",
+              "projected": [],
+              "sections": [
+                {
+                  "label": "E",
+                  "position": "right",
+                  "point": [
+                    -25.189,
+                    0,
+                    5
+                  ]
+                }
+              ]
             }
           ]
         },
         {
           "label": "C",
           "position": "left",
-          "through": "faces(\"%CYLINDER\").faces(\"<X[1]\")",
           "dimensions": [
             {
               "type": "linear",
-              "from": "faces(\"+Z\").faces(\"<Z\").faces(\"<X\")",
-              "to": "faces(\">Z\")",
+              "from": "faces('+Z').faces('<Z').faces('<X')",
+              "to": "faces('>Z')",
               "direction": "horizontal"
             }
+          ],
+          "projected": [
+            {
+              "position": "bottom",
+              "projected": [
+                {
+                  "position": "left"
+                }
+              ]
+            }
+          ],
+          "point": [
+            -24.988,
+            0,
+            5
           ]
         }
-      ]
+      ],
+      "projected": []
     },
     {
       "name": "isometric",

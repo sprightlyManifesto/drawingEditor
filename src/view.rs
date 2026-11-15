@@ -34,8 +34,18 @@ pub struct View {
     pub parent: Option<usize>,
     /// Detail view: (parent view, detail centre in the parent's local coords).
     pub anchor: Option<(usize, V2)>,
+    /// Aligned view placed at this distance from its parent along the axis (from the JSON).
+    pub dist: Option<f64>,
+    /// Point of the view (local coords) its `location` refers to: the origin,
+    /// or a detail's centre.
+    pub loc_ref: V2,
     /// JSON pointer of the view's spec, e.g. "/views/0/projected/1" (editor).
     pub src: String,
+    /// Model point at the view's origin and the view's scale (editor: sheet to model).
+    pub origin: V3,
+    pub scale: f64,
+    /// Hidden lines drawn in this view.
+    pub hidden: bool,
 }
 
 impl View {
@@ -96,13 +106,13 @@ fn edge_info(m: &Model, e: &crate::brep::Edge) -> String {
 /// Invisible pickable layer for the editor: face regions (painted far to
 /// near, so the nearest face wins), visible edge runs and silhouettes, and
 /// visible vertices, each tagged with its model index.
-fn pick_layer(m: &Model, pr: &Projector, lines: &hlr::ViewLines, clip: Option<&hlr::Clip>, circle: Option<(V2, f64)>) -> Vec<Prim> {
+fn pick_layer(m: &Model, pr: &Projector, lines: &hlr::ViewLines, clip: Option<&hlr::Clip>, circle: Option<Ell>) -> Vec<Prim> {
     use crate::brep::SurfKind;
     let d = pr.d;
     let eps = m.diag() * 1e-5;
     let clip_runs = |l: &Vec<V2>| -> Vec<Vec<V2>> {
-        match circle {
-            Some((c, r)) => clip_poly_circle(l, c, r),
+        match &circle {
+            Some(e) => clip_poly_ell(l, e),
             None => vec![l.clone()],
         }
     };
@@ -125,8 +135,8 @@ fn pick_layer(m: &Model, pr: &Projector, lines: &hlr::ViewLines, clip: Option<&h
             continue;
         }
         let mut loops: Vec<Vec<V2>> = f.loop_pts.iter().map(|l| l.iter().map(|p| pr.p(*p)).collect()).collect();
-        if let Some((c, r)) = circle {
-            loops = loops.iter().map(|l| clip_region_circle(l, c, r)).collect();
+        if let Some(e) = &circle {
+            loops = loops.iter().map(|l| clip_region_ell(l, e)).collect();
         }
         loops.retain(|l| l.len() >= 3);
         if loops.iter().map(|l| poly_area(l).abs()).fold(0.0, f64::max) < 0.3 {
@@ -235,12 +245,37 @@ pub fn sanitize(s: &str) -> String {
     o
 }
 
-/// A detail circle to draw on a view.
+/// A detail circle (or ellipse) to draw on a view.
 pub struct DetailMark {
     pub label: String,
     pub c: V3,
-    /// Radius in model units.
+    pub shape: DetShape,
+    /// JSON pointer of the detail's spec.
+    pub src: String,
+}
+
+/// Boundary of a detail: semi-axes in model units (equal for a circle), the
+/// first along `ang` degrees on the sheet.
+#[derive(Clone, Copy, Debug)]
+pub struct DetShape {
     pub r: f64,
+    pub r2: f64,
+    pub ang: f64,
+}
+
+impl DetShape {
+    /// The boundary on the sheet around `c` (sheet mm) at `scale`.
+    pub fn ell(&self, c: V2, scale: f64) -> Ell {
+        Ell { c, a: self.r * scale, b: self.r2 * scale, ang: self.ang.to_radians() }
+    }
+}
+
+/// The prims with groups opened up.
+fn flat(prims: &[Prim]) -> Vec<Prim> {
+    prims.iter().flat_map(|p| match p {
+        Prim::Group { items, .. } => flat(items),
+        p => vec![p.clone()],
+    }).collect()
 }
 
 /// A cutting plane to draw on a view.
@@ -248,6 +283,8 @@ pub struct Cut {
     pub label: String,
     pub c: V3,
     pub d: V3,
+    /// JSON pointer of the section's spec.
+    pub src: String,
 }
 
 pub struct ViewOpts<'a> {
@@ -264,11 +301,13 @@ pub struct ViewOpts<'a> {
     pub section: Option<(hlr::Clip, f64, f64)>,
     /// Title shown under the view ("SECTION A-A", "DETAIL B (2:1)").
     pub title: Option<String>,
+    /// Move of the title from its default place (sheet mm).
+    pub title_offset: V2,
     /// Detail circles to show on this view.
     pub marks: Vec<DetailMark>,
     /// Detail view: only the part inside this circle (centre, model radius,
     /// draw the boundary).
-    pub detail: Option<(V3, f64, bool)>,
+    pub detail: Option<(V3, DetShape, bool)>,
 }
 
 pub fn build_view(m: &Model, cfg: &Config, o: ViewOpts, warnings: &mut Vec<String>) -> View {
@@ -276,8 +315,8 @@ pub fn build_view(m: &Model, cfg: &Config, o: ViewOpts, warnings: &mut Vec<Strin
     let name = o.name.as_str();
     let pr = Projector { o: m.bbox.center(), r: frame.0, u: frame.1, d: frame.2, scale: o.scale };
     let clip = o.section.as_ref().map(|s| s.0);
-    let mut lines = hlr::compute(m, &pr, o.hidden, cfg.centre_lines, clip);
-    let pick = if cfg.pick_layer { pick_layer(m, &pr, &lines, clip.as_ref(), o.detail.map(|(c, r, _)| (pr.p(c), r * o.scale))) } else { vec![] };
+    let mut lines = hlr::compute(m, &pr, o.hidden, cfg.centre_lines, cfg.tangent_edges, clip);
+    let pick = if cfg.pick_layer { pick_layer(m, &pr, &lines, clip.as_ref(), o.detail.map(|(c, sh, _)| sh.ell(pr.p(c), o.scale))) } else { vec![] };
     let mut hatch = Vec::new();
     if let Some((_, ang, sp)) = &o.section {
         if lines.cut.is_empty() {
@@ -287,21 +326,22 @@ pub fn build_view(m: &Model, cfg: &Config, o: ViewOpts, warnings: &mut Vec<Strin
     }
     // detail view: keep what lies inside the detail circle
     let mut boundary: Vec<V2> = Vec::new();
-    if let Some((c, r, border)) = o.detail {
-        let (c2, r2) = (pr.p(c), r * o.scale);
-        let clip_all = |ls: &[Vec<V2>]| ls.iter().flat_map(|l| clip_poly_circle(l, c2, r2)).collect::<Vec<_>>();
+    if let Some((c, sh, border)) = o.detail {
+        let e = sh.ell(pr.p(c), o.scale);
+        let clip_all = |ls: &[Vec<V2>]| ls.iter().flat_map(|l| clip_poly_ell(l, &e)).collect::<Vec<_>>();
         let clip_segs = |ss: &[(V2, V2)]| {
-            ss.iter().flat_map(|(a, b)| clip_poly_circle(&[*a, *b], c2, r2)).map(|l| (l[0], *l.last().unwrap())).collect::<Vec<_>>()
+            ss.iter().flat_map(|(a, b)| clip_poly_ell(&[*a, *b], &e)).map(|l| (l[0], *l.last().unwrap())).collect::<Vec<_>>()
         };
         lines.visible = clip_all(&lines.visible);
         lines.hidden = clip_all(&lines.hidden);
+        lines.tangent = clip_all(&lines.tangent);
         lines.center = clip_segs(&lines.center);
         hatch = clip_segs(&hatch);
         if lines.visible.is_empty() {
             warnings.push(format!("view '{}': no geometry inside the detail circle", name));
         }
         if border {
-            boundary = (0..=96).map(|i| c2 + V2::from_angle(i as f64 / 96.0 * std::f64::consts::TAU) * r2).collect();
+            boundary = e.ring(96);
         }
     }
     let mut geometry = Vec::new();
@@ -310,6 +350,9 @@ pub fn build_view(m: &Model, cfg: &Config, o: ViewOpts, warnings: &mut Vec<Strin
     }
     if !boundary.is_empty() {
         geometry.push(Prim::Poly { pts: boundary.clone(), closed: true, cls: "thin" });
+    }
+    for l in &lines.tangent {
+        geometry.push(Prim::Poly { pts: l.clone(), closed: false, cls: "tangent" });
     }
     for l in &lines.visible {
         geometry.push(Prim::Poly { pts: l.clone(), closed: false, cls: "visible" });
@@ -329,54 +372,97 @@ pub fn build_view(m: &Model, cfg: &Config, o: ViewOpts, warnings: &mut Vec<Strin
     let mut cut_prims = Vec::new();
     for c in &o.cuts {
         match crate::section::cut_line(&pr, geom_bb, c.c, c.d, &c.label, cfg.text_height, cfg.arrow_length * 1.3, cfg.arrow_width * 1.3) {
-            Some(p) => cut_prims.extend(p),
+            // one group per cutting plane, so the editor can pick and drag it
+            Some(p) => cut_prims.push(Prim::Group {
+                attrs: vec![
+                    ("class", "cut".into()),
+                    ("data-section", c.src.clone()),
+                    ("data-label", c.label.clone()),
+                    ("data-n", crate::svg::vec_attr(pr.dir(c.d).norm())),
+                    ("data-c", format!("{},{},{}", c.c.x, c.c.y, c.c.z)),
+                    ("data-d", format!("{},{},{}", c.d.x, c.d.y, c.d.z)),
+                    ("data-scale", o.scale.to_string()),
+                ],
+                pts: vec![],
+                items: p,
+            }),
             None => warnings.push(format!("view '{}': section {} cutting plane is not edge-on in this view", name, c.label)),
         }
     }
-    // detail circles with their letter, placed clear of the geometry
+    // detail circles / ellipses with their letter, placed clear of the geometry;
+    // one group each, so the editor can pick and drag them
     let mut mark_block = Vec::new();
+    let mut mark_prims: Vec<Prim> = Vec::new();
     for mk in &o.marks {
-        let (c2, r2) = (pr.p(mk.c), mk.r * o.scale);
-        cut_prims.push(Prim::Circle { c: c2, r: r2, cls: "thin" });
-        for i in 0..24 {
-            let (a0, a1) = (i as f64 / 24.0 * std::f64::consts::TAU, (i + 1) as f64 / 24.0 * std::f64::consts::TAU);
-            mark_block.push(Prim::Line { a: c2 + V2::from_angle(a0) * r2, b: c2 + V2::from_angle(a1) * r2, cls: "thin" });
+        let c2 = pr.p(mk.c);
+        let e = mk.shape.ell(c2, o.scale);
+        let ring = e.ring(if mk.shape.r == mk.shape.r2 { 24 } else { 48 });
+        for w in ring.windows(2) {
+            mark_block.push(Prim::Line { a: w[0], b: w[1], cls: "thin" });
         }
+        let outline = if mk.shape.r == mk.shape.r2 { Prim::Circle { c: c2, r: e.a, cls: "thin" } } else { Prim::Poly { pts: e.ring(96), closed: true, cls: "thin" } };
         let h = cfg.text_height * 1.2;
         let free = |b: &BBox2| {
             !lines.visible.iter().any(|l| l.windows(2).any(|w| b.hits_segment(w[0], w[1])))
-                && !cut_prims.iter().any(|p| matches!(p, Prim::Text { .. }) && p.bbox().overlaps(b))
+                && !flat(&cut_prims).iter().chain(flat(&mark_prims).iter()).any(|p| matches!(p, Prim::Text { .. }) && p.bbox().overlaps(b))
         };
+        let at = |dir: V2| c2 + dir * (e.reach(dir) + h * 0.9) - v2(0.0, h * 0.35);
         let mut best = None;
         for k in [1, 3, 0, 2, 7, 5, 4, 6] {
-            let dir = V2::from_angle(k as f64 * std::f64::consts::FRAC_PI_4);
-            let p = c2 + dir * (r2 + h * 0.9) - v2(0.0, h * 0.35);
+            let p = at(V2::from_angle(k as f64 * std::f64::consts::FRAC_PI_4));
             let b = text_box(p, h, Anchor::Middle, 0.0, &mk.label);
             if free(&b) {
                 best = Some(p);
                 break;
             }
         }
-        let p = best.unwrap_or(c2 + V2::from_angle(std::f64::consts::FRAC_PI_4) * (r2 + h * 0.9) - v2(0.0, h * 0.35));
-        cut_prims.push(Prim::Text { p, h, anchor: Anchor::Middle, rot: 0.0, s: mk.label.clone(), cls: "title" });
+        let p = best.unwrap_or(at(V2::from_angle(std::f64::consts::FRAC_PI_4)));
+        let label = Prim::Text { p, h, anchor: Anchor::Middle, rot: 0.0, s: mk.label.clone(), cls: "title" };
+        mark_block.push(label.clone());
+        let v3s = |v: V3| format!("{},{},{}", v.x, v.y, v.z);
+        mark_prims.push(Prim::Group {
+            attrs: vec![
+                ("class", "dmark".into()),
+                ("data-detail", mk.src.clone()),
+                ("data-label", mk.label.clone()),
+                ("data-c", v3s(mk.c)),
+                ("data-r", v3s(pr.r)),
+                ("data-u", v3s(pr.u)),
+                ("data-scale", o.scale.to_string()),
+            ],
+            pts: vec![],
+            items: vec![outline, label],
+        });
     }
     let mut an_lines = lines.visible.clone();
     if !boundary.is_empty() {
         an_lines.push(boundary.clone());
     }
     let mut an = Annotator::new(m, pr, cfg, &an_lines);
-    an.block(&cut_prims.iter().filter(|p| !matches!(p, Prim::Circle { .. })).cloned().collect::<Vec<_>>());
+    an.hidden = o.hidden;
+    an.clip = o.section.as_ref().map(|s| s.0);
+    an.block(&flat(&cut_prims).into_iter().filter(|p| !matches!(p, Prim::Circle { .. })).collect::<Vec<_>>());
     an.block(&mark_block);
     an.build(o.ann, &o.src);
     for w in an.warnings.drain(..) {
         warnings.push(format!("view '{}': {}", name, w));
     }
     geometry.extend(cut_prims);
+    geometry.extend(mark_prims);
     let mut bbox = bbox_of(&geometry).union(&bbox_of(&an.dims)).union(&bbox_of(&an.gdt));
     if let Some(title) = &o.title {
         let h = cfg.text_height * 1.4;
-        let p = v2(geom_bb.center().x, bbox.min.y - 4.0 - h);
-        geometry.push(Prim::Text { p, h, anchor: crate::svg::Anchor::Middle, rot: 0.0, s: title.clone(), cls: "title" });
+        let p = v2(geom_bb.center().x, bbox.min.y - 4.0 - h) + o.title_offset;
+        // a group, so the editor can pick and move the label
+        geometry.push(Prim::Group {
+            attrs: vec![
+                ("class", "vtitle".into()),
+                ("data-view", o.src.clone()),
+                ("data-off", format!("{},{}", o.title_offset.x, o.title_offset.y)),
+            ],
+            pts: vec![],
+            items: vec![Prim::Text { p, h, anchor: crate::svg::Anchor::Middle, rot: 0.0, s: title.clone(), cls: "title" }],
+        });
         bbox = bbox_of(&geometry).union(&bbox_of(&an.dims)).union(&bbox_of(&an.gdt));
     }
     View {
@@ -392,7 +478,12 @@ pub fn build_view(m: &Model, cfg: &Config, o: ViewOpts, warnings: &mut Vec<Strin
         frame,
         parent: None,
         anchor: None,
+        dist: None,
+        loc_ref: V2::default(),
         src: o.src.clone(),
+        origin: pr.o,
+        scale: o.scale,
+        hidden: o.hidden,
     }
 }
 
@@ -468,6 +559,10 @@ pub fn layout(views: &mut [View], clusters: &[Vec<usize>], gap: f64, warnings: &
                     if vb.parent == Some(cl[a]) && vb.place == Place::Base {
                         continue;
                     }
+                    // a view placed by the JSON stays where it was put
+                    if vb.dist.is_some() {
+                        continue;
+                    }
                     let (ba, bb) = (va.world_bbox().expand(gap / 2.0), vb.world_bbox().expand(gap / 2.0));
                     if ba.overlaps(&bb) {
                         // the later view moves outward along its projection axis
@@ -515,6 +610,7 @@ pub fn layout(views: &mut [View], clusters: &[Vec<usize>], gap: f64, warnings: &
                 let (mi, mj) = match (fi, fj) {
                     (false, true) => (1.0, 0.0),
                     (true, false) => (0.0, 1.0),
+                    (true, true) => continue,     // both placed by the JSON
                     _ => (0.5, 0.5),
                 };
                 shift(views, &clusters[i], -dir * (mi + 0.01));
@@ -523,6 +619,10 @@ pub fn layout(views: &mut [View], clusters: &[Vec<usize>], gap: f64, warnings: &
             }
         }
         for cl in clusters {
+            // a base view placed by the JSON (and the views aligned with it) stays put
+            if views[cl[0]].fixed {
+                continue;
+            }
             let tz = title.expand(gap / 4.0);
             let b = cl.iter().fold(BBox2::empty(), |a, &i| a.union(&views[i].hits(&tz)));
             if !b.is_empty() {
@@ -598,6 +698,29 @@ fn position_children(views: &mut [View], cl: &[usize], push: &[f64], gap: f64) {
         for k in order {
             let v = &mut views[cl[k]];
             let p = push[k];
+            if let Some(d) = v.dist {
+                // placed by the JSON: only the distance along the axis is given
+                match v.place {
+                    Place::Right | Place::FarRight => {
+                        v.pos = v2(bp.x + d, bp.y);
+                        right = right.max(v.pos.x + v.bbox.max.x + gap);
+                    }
+                    Place::Left => {
+                        v.pos = v2(bp.x - d, bp.y);
+                        left = left.min(v.pos.x + v.bbox.min.x - gap);
+                    }
+                    Place::Above => {
+                        v.pos = v2(bp.x, bp.y + d);
+                        up = up.max(v.pos.y + v.bbox.max.y + gap);
+                    }
+                    Place::Below => {
+                        v.pos = v2(bp.x, bp.y - d);
+                        down = down.min(v.pos.y + v.bbox.min.y - gap);
+                    }
+                    Place::Base => {}
+                }
+                continue;
+            }
             match v.place {
                 Place::Right | Place::FarRight => {
                     v.pos = v2(right + p - v.bbox.min.x, bp.y);

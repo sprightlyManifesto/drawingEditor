@@ -1,0 +1,64 @@
+{
+  "step_file": "turnedPart.step",
+  "title": {
+    "drawing_number": "TP-0001",
+    "description": "TURNED PART",
+    "material": "",
+    "finish": "",
+    "notes": "REMOVE ALL BURRS AND SHARP EDGES. FILLETS R1. UNLESS OTHERWISE STATED TOLERANCES ±0.2, ANGLES ±0.5°.",
+    "revision": "A",
+    "drawn_by": "R",
+    "date": "2026-11-15"
+  },
+  "views": [
+    {
+      "name": "front",
+      "direction": [0, -1, 0],
+      "up": [0, 0, 1],
+      "scale": 2,
+      "projected": [
+        {
+          "position": "right",
+          "distance": 170.72,
+          "projected": []
+        }
+      ],
+      "dimensions": [
+        {
+          "type": "diameter",
+          "of": "faces('%CYLINDER').faces('<X')",
+          "datum": "A"
+        },
+        {
+          "type": "diameter",
+          "of": "faces('%CYLINDER').faces('<X[1]')",
+          "tolerance": "H8"
+        },
+        {
+          "type": "diameter",
+          "of": "faces('%CYLINDER').faces('<X[2]')",
+          "gdt": [
+            {
+              "characteristic": "total_runout",
+              "tolerance": "0.1",
+              "datums": [
+                "A-B"
+              ]
+            }
+          ]
+        },
+        {
+          "type": "diameter",
+          "of": "faces('%CYLINDER').faces('>X')",
+          "gdt": [],
+          "datum": "B"
+        },
+        { "type": "linear", "from": "faces('%PLANE').faces('<X')", "to": "faces('%PLANE').faces('>X')", "direction": "horizontal", "side": "below" },
+        { "type": "linear", "from": "faces('%PLANE').faces('<X')", "to": "faces('%PLANE').faces('<X[1]')", "direction": "horizontal", "side": "below" },
+        { "type": "linear", "from": "faces('%PLANE').faces('<X')", "to": "faces('%PLANE').faces('<X[2]')", "direction": "horizontal", "side": "below" },
+        { "type": "linear", "from": "faces('%PLANE').faces('<X')", "to": "faces('%PLANE').faces('<X[3]')", "direction": "horizontal", "side": "below" }
+      ],
+      "sections": []
+    }
+  ]
+}

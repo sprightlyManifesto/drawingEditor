@@ -466,7 +466,7 @@ pub fn find_selector(m: &Model, kind: Kind, ids: &[usize]) -> String {
     let target: BTreeSet<usize> = ids.iter().copied().collect();
     let by_id = || {
         let s: Vec<String> = target.iter().map(|i| format!("@{}", i)).collect();
-        format!("{}(\"{}\")", method, s.join(" or "))
+        format!("{}('{}')", method, s.join(" or "))
     };
     if target.is_empty() {
         return String::new();
@@ -529,7 +529,7 @@ pub fn find_selector(m: &Model, kind: Kind, ids: &[usize]) -> String {
                 if parts.len() == target.len() {
                     let mut c: Vec<String> = chain.clone();
                     c.push(parts.join(" or "));
-                    let s: Vec<String> = c.iter().map(|x| format!("{}(\"{}\")", method, x)).collect();
+                    let s: Vec<String> = c.iter().map(|x| format!("{}('{}')", method, x)).collect();
                     let s = s.join(".");
                     if best.as_ref().is_none_or(|b| s.len() < b.len()) {
                         best = Some(s);
@@ -544,7 +544,7 @@ pub fn find_selector(m: &Model, kind: Kind, ids: &[usize]) -> String {
                 let mut c = chain.clone();
                 c.push(label.clone());
                 if r.len() == target.len() {
-                    let s: Vec<String> = c.iter().map(|x| format!("{}(\"{}\")", method, x)).collect();
+                    let s: Vec<String> = c.iter().map(|x| format!("{}('{}')", method, x)).collect();
                     let s = s.join(".");
                     if best.as_ref().is_none_or(|b| s.len() < b.len()) {
                         best = Some(s);
