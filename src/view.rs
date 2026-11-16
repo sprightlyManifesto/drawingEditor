@@ -103,6 +103,62 @@ fn edge_info(m: &Model, e: &crate::brep::Edge) -> String {
     }
 }
 
+/// The region on the sheet of a hole's cylinder or cone (seen side-on) that a
+/// section cuts: the part of it behind the cutting plane, and its mean depth.
+fn cut_round_region(f: &crate::brep::Face, pr: &Projector, c: &hlr::Clip, eps: f64) -> Option<(Vec<V2>, f64)> {
+    use crate::brep::SurfKind;
+    if f.same_sense || !matches!(f.surf.kind, SurfKind::Cylinder { .. } | SurfKind::Cone { .. }) {
+        return None;
+    }
+    let (o, z) = (f.surf.fr.o, f.surf.fr.z.norm());
+    if z.dot(pr.d).abs() > 0.01 {
+        return None;
+    }
+    let pts: Vec<V3> = f.loop_pts.iter().flatten().copied().collect();
+    let t = |p: V3| (p - o).dot(z);
+    let rad = |p: V3| {
+        let w = p - o;
+        (w - z * w.dot(z)).len()
+    };
+    let t0 = pts.iter().map(|p| t(*p)).fold(f64::MAX, f64::min);
+    let t1 = pts.iter().map(|p| t(*p)).fold(f64::MIN, f64::max);
+    if t1 - t0 < eps {
+        return None;
+    }
+    // radius at each end (a cone's differ)
+    let r_at = |te: f64| pts.iter().filter(|p| (t(**p) - te).abs() < (t1 - t0) * 1e-3 + eps).map(|p| rad(*p)).fold(0.0, f64::max);
+    let (r0, r1) = (r_at(t0), r_at(t1));
+    // the kept arc of each end circle: its extent across the axis on the sheet
+    let u = z.cross(if z.x.abs() < 0.9 { v3(1.0, 0.0, 0.0) } else { v3(0.0, 1.0, 0.0) }).norm();
+    let v = z.cross(u);
+    let a2 = pr.dir(z).norm();
+    let n2 = a2.perp();
+    let mut sum = 0.0;
+    let mut cnt = 0.0;
+    let mut span = |te: f64, r: f64| -> Option<(f64, f64)> {
+        let mut lo = f64::MAX;
+        let mut hi = f64::MIN;
+        for k in 0..360 {
+            let th = (k as f64).to_radians();
+            let p = o + z * te + (u * th.cos() + v * th.sin()) * r;
+            if c.removed(p, eps) || !f.contains(p) {
+                continue;
+            }
+            let q = pr.p(p).dot(n2);
+            lo = lo.min(q);
+            hi = hi.max(q);
+            sum += p.dot(pr.d);
+            cnt += 1.0;
+        }
+        (hi > lo).then_some((lo, hi))
+    };
+    let (s0, s1) = (span(t0 + (t1 - t0) * 1e-3, r0)?, span(t1 - (t1 - t0) * 1e-3, r1)?);
+    let (e0, e1) = (pr.p(o + z * t0).dot(a2), pr.p(o + z * t1).dot(a2));
+    let at = |along: f64, across: f64| a2 * along + n2 * across;
+    let quad = vec![at(e0, s0.0), at(e0, s0.1), at(e1, s1.1), at(e1, s1.0)];
+    Some((quad, sum / cnt))
+}
+
 /// Invisible pickable layer for the editor: face regions (painted far to
 /// near, so the nearest face wins), visible edge runs and silhouettes, and
 /// visible vertices, each tagged with its model index.
@@ -129,12 +185,21 @@ fn pick_layer(m: &Model, pr: &Projector, lines: &hlr::ViewLines, clip: Option<&h
             SurfKind::Cylinder { .. } | SurfKind::Cone { .. } if f.surf.fr.z.dot(d).abs() > 0.999 => continue,
             _ => {}
         }
-        if let Some(c) = clip
-            && f.loop_pts.iter().flatten().any(|p| c.removed(*p, eps))
-        {
-            continue;
-        }
-        let mut loops: Vec<Vec<V2>> = f.loop_pts.iter().map(|l| l.iter().map(|p| pr.p(*p)).collect()).collect();
+        let mut depth = f.center.dot(d);
+        let mut loops: Vec<Vec<V2>> = match clip {
+            Some(c) if f.loop_pts.iter().flatten().any(|p| c.removed(*p, eps)) => {
+                // cut by the section: a hole's cylinder / cone seen side-on picks
+                // by the part left behind the cutting plane
+                match cut_round_region(f, pr, c, eps) {
+                    Some((l, z)) => {
+                        depth = z;
+                        vec![l]
+                    }
+                    None => continue,
+                }
+            }
+            _ => f.loop_pts.iter().map(|l| l.iter().map(|p| pr.p(*p)).collect()).collect(),
+        };
         if let Some(e) = &circle {
             loops = loops.iter().map(|l| clip_region_ell(l, e)).collect();
         }
@@ -147,7 +212,7 @@ fn pick_layer(m: &Model, pr: &Projector, lines: &hlr::ViewLines, clip: Option<&h
             pts: vec![],
             items: vec![Prim::Area { loops, cls: "pk" }],
         };
-        faces.push((f.center.dot(d), g));
+        faces.push((depth, g));
     }
     faces.sort_by(|a, b| a.0.total_cmp(&b.0));
     let mut out: Vec<Prim> = faces.into_iter().map(|f| f.1).collect();

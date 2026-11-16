@@ -242,8 +242,8 @@ Every view (base, projected, section or detail) can hold these lists. Annotation
 | `type` | fields | measures |
 |---|---|---|
 | `linear` | `from`, `to`, `direction`, `side` | Distance between two features. |
-| `diameter` | `of` | A circle or cylinder. Seen end-on: a leader to the circle. Seen side-on: a dimension across it. |
-| `radius` | `of` | An arc or cylinder, with a leader. |
+| `diameter` | `of` | A circle, arc, cylinder or fillet. Seen end-on: a leader to the circle (on an arc, one arrow with the line running past the centre). Seen side-on: a dimension across it. |
+| `radius` | `of` | The same features, measured as a radius: a leader from the centre, or side-on a dimension from the axis. |
 | `angle` | `from`, `to` | Angle between two straight edges, or two flat faces seen edge-on. |
 | `ordinate` | `origin`, `targets`, `direction`, `side` | Distances of several features from one origin. |
 
@@ -253,7 +253,9 @@ Fields for all dimension types:
 |---|---|---|---|
 | `type` | string | *required* | One of the types above. |
 | `from`, `to` | selector | | `linear` and `angle`: the two features. |
-| `of` | selector | | `diameter` and `radius`: the feature. |
+| `flipArrows` | true / false | false | `linear`, and `diameter` / `radius` seen side-on: the arrows the other way round. Where they would sit inside the extension lines they go outside, pointing in, and where they would be outside (a short dimension) they go inside, pointing out. The text stays where it was. |
+| `fromPoint`, `toPoint` | `"center"` / `"max"` / `"min"` | `"center"` | `linear`, when `from` / `to` is a circle, arc or cylinder: measure to its centre, to its far side (`max`: the largest distance the dimension can be) or to its near side (`min`: the smallest). |
+| `of` | selector | | `diameter` and `radius`: the feature: a circle or arc edge, a cylindrical face, or a fillet (torus) face where it shows in profile. Either type works on any of these, so a radius can be shown as a diameter and the other way round (in the editor, **→ Radius** / **→ Diameter** in the dimension's JSON window, which also swaps `R<>` / `Ø<>` in `text`). |
 | `origin`, `targets` | selector, list of selectors | | `ordinate`: the zero and the features measured from it. |
 | `direction` | string | the larger offset | `linear`: `horizontal`, `vertical` or `aligned`. `ordinate`: `x` or `y`. |
 | `side` | string | the side of the view's centre the feature is on | `above`, `below` (horizontal), `left` or `right` (vertical) of the view. |
@@ -267,7 +269,7 @@ Fields for all dimension types:
 
 Linear dimensions are stacked for you: shorter ones nearest the view, and a dimension moves out a level when it would overlap another. Ordinate labels are spread apart with jogged leaders. Diameter and radius leaders go in the nearest free space.
 
-What a feature contributes to a measurement: a vertex gives its point, a straight edge its midpoint, a circle or arc its centre, a flat face its centre, and a cylinder a point on its axis.
+What a feature contributes to a measurement: a vertex gives its point, a straight edge its midpoint, a circle or arc its centre, a flat face its centre, and a cylinder a point on its axis. A circle, arc or cylinder can give its edge instead: `fromPoint` / `toPoint` `"max"` measures to the side that makes the dimension largest, `"min"` to the side that makes it smallest.
 
 ```json
 "dimensions": [
@@ -276,6 +278,9 @@ What a feature contributes to a measurement: a vertex gives its point, a straigh
   { "type": "diameter", "of": "faces('%CYLINDER').faces('<X')", "tolerance": "h7" },
   { "type": "diameter", "of": "edges('%CIRCLE').edges('>Z')", "text": "4X Ø<> THRU" },
   { "type": "radius", "of": "faces('%CYLINDER').faces('>Y')", "text": "R<> TYP" },
+  { "type": "linear", "from": "faces('<X')", "to": "faces('%CYLINDER').faces('<Y')", "toPoint": "max", "direction": "horizontal" },
+  { "type": "linear", "from": "faces('<Z')", "to": "faces('>Z')", "direction": "vertical", "flipArrows": true },
+  { "type": "linear", "from": "faces('%CYLINDER').faces('<Y')", "to": "faces('%CYLINDER').faces('<Y[1]')", "fromPoint": "min", "toPoint": "min", "direction": "vertical" },
   { "type": "angle", "from": "edges('%LINE').edges('<X')", "to": "edges('%LINE').edges('>Y')" },
   { "type": "ordinate", "origin": "faces('<X')", "targets": ["faces('%CYLINDER').faces('<X')", "faces('%CYLINDER').faces('>X')"],
     "direction": "x", "side": "below", "tolerance": "basic" }
@@ -413,7 +418,7 @@ A cosmetic thread (ISO 6410) on a hole or shaft, with an optional callout. Seen 
 
 | field | type | default | meaning |
 |---|---|---|---|
-| `of` | selector | *required* | The threaded cylinder (or a circular edge of it). |
+| `of` | selector | *required* | The threaded cylinder, or any edge of it. A circle or arc picks the cylinder it bounds; a circle that bounds no cylinder (e.g. the outer rim of a chamfer or countersink) picks the coaxial cylinder nearest it. |
 | `size` | text | | `"M6"` (coarse pitch) or `"M10x1.25"`. |
 | `major`, `pitch` | numbers | | Instead of `size`: major diameter and pitch in mm. |
 | `depth` | number | the whole hole or shaft | Thread length from the open end. |
@@ -425,6 +430,7 @@ A cosmetic thread (ISO 6410) on a hole or shaft, with an optional callout. Seen 
 
 - **Hole or shaft:** a hole should be modelled at its tap-drill size (you get a warning if it isn't smaller than the thread); its thread is drawn at the major diameter. A shaft's thread is drawn at the minor diameter.
 - **Seen side-on:** a hole's thread lines are dashed unless a section cuts through it, and left out if the view has no hidden lines.
+- **Open end:** the thread starts at the end that opens onto a face looking outwards, or onto a chamfer (a countersink on a hole, a narrowing chamfer on a shaft).
 - **Seen end-on:** drawn only when the threaded end faces the viewer. In other directions (e.g. isometric views) threads are not drawn.
 
 ```json

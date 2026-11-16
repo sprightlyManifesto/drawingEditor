@@ -187,8 +187,20 @@ pub struct DimSpec {
     pub kind: String,
     pub from: Option<String>,
     pub to: Option<String>,
+    /// Linear: where the dimension meets a circle / cylinder at `from` / `to`
+    /// ("fromPoint" / "toPoint"): "center" (default), "max" (its far side: the
+    /// largest distance) or "min" (its near side: the smallest).
+    #[serde(rename = "fromPoint")]
+    pub from_point: Option<String>,
+    #[serde(rename = "toPoint")]
+    pub to_point: Option<String>,
     /// Feature for diameter / radius.
     pub of: Option<String>,
+    /// Linear (and side-on diameter / radius): arrows the other way round:
+    /// outside the extension lines pointing in where they would be inside,
+    /// inside pointing out where they would be outside.
+    #[serde(rename = "flipArrows")]
+    pub flip_arrows: bool,
     pub origin: Option<String>,
     pub targets: Vec<String>,
     /// horizontal | vertical | aligned (linear); x | y (ordinate)

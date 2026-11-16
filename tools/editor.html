@@ -271,6 +271,7 @@
       </div>
     </div>
     <span id="annMembers" hidden></span>
+    <button id="annRD" hidden></button>
     <button id="annMerge" hidden title="Merge another dimension, thread, GD&T frame or note on the same feature onto this one's leader">Merge with…</button>
     <span id="annMsg"></span>
     <button id="annHelp" title="Help on this kind of entry, with examples (F1)">Help</button>
@@ -1021,9 +1022,9 @@ function renderSelPanel() {
       : `Open the JSON editor with a new ${KIND_TITLES[key].toLowerCase()} for the selected geometry`;
     b.disabled = !specText || addBusy;
     if (key === "threads" && !threadable()) {
-      // threads go on straight lines: a hole / shaft seen side-on, or a straight edge of one
+      // threads go on a hole / shaft: its cylinder, an edge of it, or a circle at its end
       b.disabled = true;
-      b.title = "A thread is added on straight lines: pick a hole or shaft seen from the side (its cylinder) or a straight edge of it, not a circle or a flat face";
+      b.title = "A thread goes on a hole or shaft: pick its cylinder, a circle or arc of it (end-on), or a straight edge of it, not a flat face";
     }
     b.onclick = () => addAnnotation(key);
     add.appendChild(b);
@@ -1171,9 +1172,9 @@ function nextDatum(spec) {
 }
 /** A thread for the picked hole / shaft: metric size from the tap drill (hole) or the diameter (shaft). */
 async function guessThread(fs) {
-  const f = fs.find(f => f.round || /^CONE/.test(f.info)) || fs[0];
+  const f = fs.find(f => f.round || /^CONE/.test(f.info)) || fs.find(f => f.arc) || fs[0];
   const of = await selectorOf(f.p.kind, [f.p.id]);
-  const d = parseFloat(f.size);
+  const d = parseFloat(f.size) * (/^(ARC|TORUS)/.test(f.info) ? 2 : 1);
   // [size, coarse pitch]; tap drill = size - pitch
   const M = [[1.6, .35], [2, .4], [2.5, .45], [3, .5], [4, .7], [5, .8], [6, 1], [8, 1.25], [10, 1.5], [12, 1.75], [14, 2], [16, 2], [18, 2.5], [20, 2.5], [22, 2.5], [24, 3], [27, 3], [30, 3.5], [36, 4], [42, 4.5], [48, 5]];
   let size = null;
@@ -1193,11 +1194,11 @@ async function guessNote(fs) {
   return { text, attach };
 }
 let addBusy = false, lastWarnings = [];
-/** Is everything picked a straight line a thread can go on: a cylinder / cone seen
- *  side-on (the pick layer has no end-on ones) or a straight edge? */
+/** Is everything picked something a thread can go on: a cylinder / cone, a
+ *  straight edge of one, or a circle / arc (a hole or shaft seen end-on)? */
 function threadable() {
   const list = [...picks.values()];
-  return list.length > 0 && list.every(p => (p.kind === "faces" && /^(CYLINDER|CONE)/.test(p.info || "")) || (p.kind === "edges" && /^LINE/.test(p.info || "")));
+  return list.length > 0 && list.every(p => (p.kind === "faces" && /^(CYLINDER|CONE)/.test(p.info || "")) || (p.kind === "edges" && /^(LINE|CIRCLE|ARC)/.test(p.info || "")));
 }
 /** Add a new dimension straight away; the JSON editor opens only when it can't be drawn. */
 async function addDimensionDirect(view, val, spec) {
@@ -1225,7 +1226,7 @@ async function addDimensionDirect(view, val, spec) {
 /** Open the editor with a new `key` entry ("dimensions", "gdt", ...) for the picked geometry. */
 async function addAnnotation(key) {
   if (!picks.size || !specText || addBusy) return;
-  if (key === "threads" && !threadable()) { setStatus("A thread is added on straight lines: pick a hole or shaft seen from the side", true); return; }
+  if (key === "threads" && !threadable()) { setStatus("A thread goes on a hole or shaft: pick its cylinder, a circle or arc of it, or a straight edge of it", true); return; }
   let spec;
   try { spec = JSON.parse(specText); } catch (e) { setStatus("The drawing JSON could not be read", true); return; }
   const list = [...picks.values()];
@@ -1587,7 +1588,10 @@ function schemaFor(kind, spec) {
       properties: {
         type: { enum: ["linear", "diameter", "radius", "angle", "ordinate"], description: "Kind of dimension." },
         from: sel("linear / angle: first feature."), to: sel("linear / angle: second feature."),
-        of: sel("diameter / radius: circle edge or cylindrical face."),
+        flipArrows: { type: "boolean", default: false, description: "linear (and diameter / radius seen side-on): arrows the other way round: outside the extension lines pointing in where they would be inside, inside pointing out where they would be outside." },
+        fromPoint: { enum: ["center", "max", "min"], default: "center", description: "linear, when \"from\" is a circle, arc or cylinder: measure from its centre (default), its far side (max: the largest distance) or its near side (min: the smallest)." },
+        toPoint: { enum: ["center", "max", "min"], default: "center", description: "linear, when \"to\" is a circle, arc or cylinder: measure to its centre (default), its far side (max: the largest distance) or its near side (min: the smallest)." },
+        of: sel("diameter / radius: a circle or arc edge, or a cylindrical face. Either type works on any of them (switch with → Radius / → Diameter)."),
         origin: sel("ordinate: the zero point."),
         targets: { type: "array", items: sel("ordinate: a feature to dimension."), description: "ordinate: features to dimension." },
         direction: { enum: ["horizontal", "vertical", "aligned", "x", "y"], description: "linear: horizontal / vertical / aligned (default: the dominant axis). ordinate: x / y." },
@@ -1632,7 +1636,7 @@ function schemaFor(kind, spec) {
     threads: {
       type: "object", additionalProperties: false, required: ["of"],
       properties: {
-        of: sel("The threaded hole or shaft: its cylindrical face (or a circular edge of it)."),
+        of: sel("The threaded hole or shaft: its cylindrical face, or any edge of it (a circle or arc picks the cylinder it bounds, or the coaxial one nearest it)."),
         size: { type: "string", description: "Metric designation: \"M6\" (coarse pitch) or \"M10x1.25\". Sets the major diameter and pitch.", examples: ["M3", "M4", "M5", "M6", "M8", "M10", "M12", "M16", "M20", "M10x1.25", "M12x1.5"] },
         major: { type: "number", exclusiveMinimum: 0, description: "Major diameter (mm), when there is no metric size." },
         pitch: { type: "number", exclusiveMinimum: 0, description: "Pitch (mm); default the ISO coarse pitch." },
@@ -1933,6 +1937,7 @@ async function openEditorWith(ptr, kind, val, spec, note) {
   const text = JSON.stringify(val, null, 2);
   editing.text0 = text;
   refreshMergeUi();
+  refreshRD(val);
   $("annDlg").showModal();
   // start from the drawing as it is now (after opening, so it can be measured)
   if (svg) showPreview(new XMLSerializer().serializeToString(svg), ptr);
@@ -2284,6 +2289,7 @@ function applyHighlights(root) {
 // ------------------------------------------------------------ live preview in the editor
 let previewTimer = null, previewSeq = 0;
 function schedulePreview() {
+  refreshRD();
   refreshArrows();
   scheduleHighlights();
   if (fixing) return;              // the comma fix is previewed by the run that made it
@@ -2404,6 +2410,34 @@ function headOf(src) {
   return g ? g.dataset.src : src;
 }
 let merging = null;   // {head, feat, base, cands: [g], picks: Set<src>}
+/** The diameter ⇄ radius switch for a diameter / radius dimension being edited. */
+function refreshRD(val) {
+  const b = $("annRD");
+  b.hidden = true;
+  if (!editing || editing.kind !== "dimensions") return;
+  if (val === undefined) { try { val = JSON.parse(editorText()); } catch (e) { return; } }
+  const t = val && typeof val.type === "string" ? val.type.toLowerCase() : "";
+  if (t !== "diameter" && t !== "radius") return;
+  b.hidden = false;
+  const to = t === "diameter" ? "radius" : "diameter";
+  b.textContent = to === "radius" ? "→ Radius" : "→ Diameter";
+  b.title = `Show this as a ${to} (${to === "radius" ? "R" : "Ø"}) and re-render; Ctrl+Z undoes it`;
+}
+$("annRD").onclick = async () => {
+  if (!editing) return;
+  let val;
+  try { val = JSON.parse(autoFixCommas(true)); } catch (e) { annMsg("Fix the JSON first: " + e.message, true); return; }
+  const t = String(val.type || "").toLowerCase();
+  if (t !== "diameter" && t !== "radius") return;
+  val.type = t === "diameter" ? "radius" : "diameter";
+  // custom text naming the symbol ("R<> TYP", "2X Ø<>"): swap it too
+  if (typeof val.text === "string") val.text = val.type === "radius" ? val.text.replace(/[Ø⌀]\s*<>/g, "R<>") : val.text.replace(/\bR\s*<>/g, "Ø<>");
+  if (editing.arr) { setEditorText(JSON.stringify(val, null, 2)); await applyAnnEdit(); return; }   // a new entry: nothing to undo yet
+  let next;
+  try { next = specWith(val); } catch (e) { annMsg("Could not update the drawing JSON: " + e.message, true); return; }
+  closeAnnEditor();
+  await writeSpec(next, "dimension type", `Changed the dimension to a ${val.type}`);
+};
 function refreshMergeUi() {
   const b = $("annMerge"), box = $("annMembers");
   b.hidden = true; box.hidden = true; clear(box);

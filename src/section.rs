@@ -53,7 +53,7 @@ fn trace(f: &Face, g: &dyn Fn(f64) -> Option<V3>, t0: f64, t1: f64, n: usize, pe
 /// Intersection curves of the plane (point c, normal n) with the model's faces.
 pub fn plane_cut(m: &Model, c: V3, n: V3) -> Vec<Vec<V3>> {
     let mut out = Vec::new();
-    for f in &m.faces {
+    for (fi, f) in m.faces.iter().enumerate() {
         // quick reject: whole face on one side
         let b = f.bbox;
         let mut lo = f64::INFINITY;
@@ -106,7 +106,7 @@ pub fn plane_cut(m: &Model, c: V3, n: V3) -> Vec<Vec<V3>> {
                     let rr = r + v * kk;
                     fr.o + fr.x * (rr * t.cos()) + fr.y * (rr * t.sin()) + fr.z * v
                 };
-                if bz.abs() > 1e-6 || kk != 0.0 {
+                if bz.abs() > 1e-6 {
                     let g = move |t: f64| {
                         let a = a_of(t);
                         let den = kk * a + bz;
@@ -121,23 +121,30 @@ pub fn plane_cut(m: &Model, c: V3, n: V3) -> Vec<Vec<V3>> {
                     };
                     out.extend(trace(f, &g, 0.0, TAU, 360, true));
                 } else {
-                    // plane parallel to the axis: two straight lines
+                    // plane parallel to the axis: at height v the circle of radius
+                    // rr meets it where cos(t - phi) = k / (rr m): two straight
+                    // lines on a cylinder (or on a cone cut through its axis),
+                    // otherwise the two halves of a hyperbola
                     let (ax, ay) = (fr.x.dot(n), fr.y.dot(n));
                     let mm = ax.hypot(ay);
-                    if mm < 1e-12 || (k / (r * mm)).abs() > 1.0 {
+                    if mm < 1e-12 {
                         continue;
                     }
                     let phi = ay.atan2(ax);
-                    let al = (k / (r * mm)).acos();
                     let (v0, v1) = f.v_range();
-                    for t in [phi + al, phi - al] {
-                        let g = move |v: f64| Some(at(t, v));
+                    for sg in [1.0, -1.0] {
+                        let t_at = move |v: f64| {
+                            let rr = r + v * kk;
+                            let q = k / (rr * mm);
+                            (rr > 0.0 && q.abs() <= 1.0).then(|| phi + sg * q.acos())
+                        };
+                        let g = move |v: f64| t_at(v).map(|t| at(t, v));
                         let mut runs = trace(f, &g, v0 - 1e-3, v1 + 1e-3, 100, false);
                         // a line lying on the face's seam (or boundary) can fail the
                         // in-face test; retry just either side of it
                         for eps in [1e-6, -1e-6] {
                             if runs.is_empty() {
-                                let g = move |v: f64| Some(at(t + eps, v));
+                                let g = move |v: f64| t_at(v).map(|t| at(t + eps, v));
                                 runs = trace(f, &g, v0 - 1e-3, v1 + 1e-3, 100, false);
                             }
                         }
@@ -157,10 +164,166 @@ pub fn plane_cut(m: &Model, c: V3, n: V3) -> Vec<Vec<V3>> {
                 let g = move |t: f64| Some(q0 + a * (rr * t.cos()) + bb * (rr * t.sin()));
                 out.extend(trace(f, &g, 0.0, TAU, 240, true));
             }
-            _ => {}
+            SurfKind::Torus { major, minor } => {
+                // point at angle u around the axis and w around the tube, kept
+                // to the arc of tube angles the face covers (its (u, v) test
+                // can't tell the inside of the tube from the outside)
+                let (w0, span) = tube_span(f, major);
+                let on = move |w: f64| wrap_2pi(w - w0) <= span + 1e-6;
+                let e = move |u: f64| fr.x * u.cos() + fr.y * u.sin();
+                let at = move |u: f64, w: f64| fr.o + e(u) * (major + minor * w.cos()) + fr.z * (minor * w.sin());
+                let bz = fr.z.dot(n);
+                let (ax, ay) = (fr.x.dot(n), fr.y.dot(n));
+                if bz.abs() < 1e-6 {
+                    // plane along the axis: for each tube angle w the ring of
+                    // radius rho meets it where cos(u - phi) = k / (rho m)
+                    // (a plane through the axis: two tube circles)
+                    let mm = ax.hypot(ay);
+                    if mm < 1e-12 {
+                        continue;
+                    }
+                    let phi = ay.atan2(ax);
+                    for sg in [1.0, -1.0] {
+                        let g = move |w: f64| {
+                            if !on(w) {
+                                return None;
+                            }
+                            let q = k / ((major + minor * w.cos()) * mm);
+                            if q.abs() > 1.0 {
+                                return None;
+                            }
+                            Some(at(phi + sg * q.acos(), w))
+                        };
+                        out.extend(trace(f, &g, 0.0, TAU, 360, true));
+                    }
+                } else {
+                    // for each angle u: the tube circle there meets the plane
+                    // where A cos w + B sin w = C
+                    for sg in [1.0, -1.0] {
+                        let g = move |u: f64| {
+                            let en = e(u).dot(n);
+                            let (aa, bb, cc) = (en * minor, bz * minor, k - en * major);
+                            let h = aa.hypot(bb);
+                            if h < 1e-12 || (cc / h).abs() > 1.0 {
+                                return None;
+                            }
+                            let w = bb.atan2(aa) + sg * (cc / h).acos();
+                            if !on(w) {
+                                return None;
+                            }
+                            Some(at(u, w))
+                        };
+                        out.extend(trace(f, &g, 0.0, TAU, 720, true));
+                    }
+                }
+            }
+            SurfKind::Other(_) => out.extend(other_cut(m, fi, c, n)),
         }
     }
     out
+}
+
+/// Cut of a face whose surface can't be evaluated (a B-spline fillet): where
+/// its boundary edges cross the plane, nearby crossings on different edges
+/// are joined by a curve leaving each tangent to the face on the far side of
+/// that edge (a straight line when that face's normal isn't known).
+fn other_cut(m: &Model, fi: usize, c: V3, n: V3) -> Vec<Vec<V3>> {
+    let f = &m.faces[fi];
+    let side = |p: V3| (p - c).dot(n);
+    // (edge, point, tangent of the cut on the neighbouring face)
+    let mut xs: Vec<(usize, V3, Option<V3>)> = Vec::new();
+    for &ei in &f.edges {
+        let e = &m.edges[ei];
+        for w in e.pts.windows(2) {
+            let (sa, sb) = (side(w[0]), side(w[1]));
+            if (sa < 0.0) == (sb < 0.0) || sa == sb {
+                continue;
+            }
+            let p = w[0] + (w[1] - w[0]) * (sa / (sa - sb));
+            if xs.iter().any(|x| x.1.dist(p) < 1e-6) {
+                continue;
+            }
+            let t = e.faces.iter().filter(|&&g| g != fi).find_map(|&g| m.faces[g].surf.normal_at(p)).map(|nb| n.cross(nb)).filter(|t| t.len() > 1e-9).map(|t| t.norm());
+            xs.push((ei, p, t));
+        }
+    }
+    let reach = f.bbox.max.dist(f.bbox.min) * 0.25;
+    let mut used = vec![false; xs.len()];
+    let mut out = Vec::new();
+    loop {
+        // the closest pair left on different edges
+        let mut best: Option<(f64, usize, usize)> = None;
+        for i in 0..xs.len() {
+            for j in i + 1..xs.len() {
+                if used[i] || used[j] || xs[i].0 == xs[j].0 {
+                    continue;
+                }
+                let dd = xs[i].1.dist(xs[j].1);
+                if dd < reach && best.is_none_or(|b| dd < b.0) {
+                    best = Some((dd, i, j));
+                }
+            }
+        }
+        let Some((dd, i, j)) = best else { break };
+        used[i] = true;
+        used[j] = true;
+        let (p0, p1) = (xs[i].1, xs[j].1);
+        // control point: where the two tangent lines meet
+        let ctrl = match (xs[i].2, xs[j].2) {
+            (Some(t0), Some(t1)) => {
+                let t0 = if t0.dot(p1 - p0) < 0.0 { -t0 } else { t0 };
+                let t1 = if t1.dot(p0 - p1) < 0.0 { -t1 } else { t1 };
+                // p0 + s t0 = p1 + u t1, solved in the plane
+                let den = t0.cross(t1).dot(n);
+                if den.abs() < 1e-9 {
+                    None
+                } else {
+                    let s = (p1 - p0).cross(t1).dot(n) / den;
+                    let q = p0 + t0 * s;
+                    (s > 0.0 && s < 2.0 * dd && (q - p1).dot(t1) > 0.0).then_some(q)
+                }
+            }
+            _ => None,
+        };
+        let pts: Vec<V3> = match ctrl {
+            Some(q) => (0..=16)
+                .map(|k| {
+                    let t = k as f64 / 16.0;
+                    p0 * ((1.0 - t) * (1.0 - t)) + q * (2.0 * t * (1.0 - t)) + p1 * (t * t)
+                })
+                .collect(),
+            None => vec![p0, p1],
+        };
+        out.push(pts);
+    }
+    out
+}
+
+/// The arc of tube angles a torus face covers: (start, length), the shortest
+/// arc holding all its boundary points.
+fn tube_span(f: &Face, major: f64) -> (f64, f64) {
+    let fr = f.surf.fr;
+    let mut ws: Vec<f64> = f
+        .loop_pts
+        .iter()
+        .flatten()
+        .map(|p| {
+            let q = fr.local(*p);
+            wrap_2pi(q.z.atan2((q.x * q.x + q.y * q.y).sqrt() - major))
+        })
+        .collect();
+    if ws.is_empty() {
+        return (0.0, TAU);
+    }
+    ws.sort_by(|a, b| a.total_cmp(b));
+    let (mut gap, mut w0) = (ws[0] + TAU - ws[ws.len() - 1], ws[0]);
+    for i in 1..ws.len() {
+        if ws[i] - ws[i - 1] > gap {
+            gap = ws[i] - ws[i - 1];
+            w0 = ws[i];
+        }
+    }
+    (w0, (TAU - gap).max(1e-9))
 }
 
 /// Boundary segments of the region bounded by `loops` (open polylines which

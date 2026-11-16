@@ -1,0 +1,54 @@
+{
+  "step_file": "standoff.step",
+  "title": {
+    "drawing_number": "standoff-0001",
+    "description": "standoff",
+    "material": "AL 6061-T6",
+    "finish": "CLEAR ANODISE",
+    "notes": "REMOVE ALL BURRS AND SHARP EDGES. UNLESS OTHERWISE STATED TOLERANCES ±0.2, ANGLES ±0.5°.",
+    "revision": "A",
+    "drawn_by": "R",
+    "date": "2026-11-12"
+  },
+  "views": [
+    {
+      "name": "front",
+      "direction": [
+        0,
+        -1,
+        0
+      ],
+      "up": [
+        0,
+        0,
+        1
+      ],
+      "location": [146.67, 132.5],
+      "scale": 5,
+      "projected": [
+        {
+          "position": "top",
+          "threads": [
+            {
+              "of": "edges('@5')",
+              "size": "M6",
+              "all_alike": true
+            },
+            {
+              "of": "edges('@2')",
+              "size": "M10",
+              "all_alike": true
+            }
+          ],
+          "projected": [],
+          "sections": [
+            {
+              "label": "A",
+              "position": "right"
+            }
+          ]
+        }
+      ]
+        }
+    ]
+  }

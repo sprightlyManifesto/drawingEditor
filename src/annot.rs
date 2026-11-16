@@ -107,6 +107,8 @@ pub struct DimText {
     /// more lines of text (merged notes, thread callouts), read after `main`:
     /// between it and the line when the line is below the text, else beyond it
     pub extra: Vec<String>,
+    /// "flipArrows": the arrows the other way round from where they'd go
+    pub flip: bool,
 }
 
 /// Copy of `p` with every point mapped by `f` and text turned by `rot` degrees.
@@ -285,7 +287,7 @@ impl<'a> Annotator<'a> {
         };
         let has_value = spec.text.as_ref().map_or(true, |t| t.contains("<>"));
         let whole = |n: &str| if has_value { format!("{}{}{}", pre, n, post) } else { pre.clone() };
-        let mut dt = DimText { main: whole(&num), plus: None, minus: None, limits: false, tail: String::new(), basic: false, frames: vec![], datum: None, line_y: -1.0, extra: vec![] };
+        let mut dt = DimText { main: whole(&num), plus: None, minus: None, limits: false, tail: String::new(), basic: false, frames: vec![], datum: None, line_y: -1.0, extra: vec![], flip: spec.flip_arrows };
         // signed deviation text; both deviations get the same decimal places
         let dev = |v: f64, d: usize| {
             if v == 0.0 {
@@ -624,6 +626,70 @@ impl<'a> Annotator<'a> {
                 None
             }
         }
+    }
+
+    /// References of a diameter / radius: like `refs`, with a fillet (torus)
+    /// face seen in profile standing for its tube circle in this view.
+    fn circ_refs(&mut self, s: &Option<String>) -> Option<Vec<RefGeo>> {
+        let mut refs = self.refs(s, "of")?;
+        if let Ok(sel) = select(self.m, s.as_deref().unwrap_or("")) {
+            if sel.kind == Kind::Face {
+                for (g, &fi) in refs.iter_mut().zip(&sel.ids) {
+                    if g.circ.is_none() {
+                        if let Some(c) = self.torus_profile(fi) {
+                            g.rep = c.c;
+                            g.circ = Some(c);
+                        }
+                    }
+                }
+            }
+        }
+        Some(refs)
+    }
+
+    /// The tube circle of a torus face where it shows in profile (its axis
+    /// across the view): the arc of it on the face, on the side with more of it.
+    fn torus_profile(&self, fi: usize) -> Option<Circ> {
+        let f = &self.m.faces[fi];
+        let SurfKind::Torus { major, minor } = f.surf.kind else { return None };
+        let fr = &f.surf.fr;
+        let (z, d) = (fr.z.norm(), self.pr.d.norm());
+        if z.dot(d).abs() > 0.01 {
+            return None;
+        }
+        // tube angles the face covers: the shortest arc holding its boundary points
+        let tube = |p: V3| {
+            let q = fr.local(p);
+            q.z.atan2((q.x * q.x + q.y * q.y).sqrt() - major)
+        };
+        let mut ws: Vec<f64> = f.loop_pts.iter().flatten().map(|p| wrap_2pi(tube(*p))).collect();
+        if ws.is_empty() {
+            return None;
+        }
+        ws.sort_by(|a, b| a.total_cmp(b));
+        let (mut gap, mut w0) = (ws[0] + 2.0 * PI - ws[ws.len() - 1], ws[0]);
+        for k in 1..ws.len() {
+            if ws[k] - ws[k - 1] > gap {
+                gap = ws[k] - ws[k - 1];
+                w0 = ws[k];
+            }
+        }
+        let span = 2.0 * PI - gap;
+        let w = z.cross(d).norm();
+        let mut best: Option<Circ> = None;
+        for side in [w, -w] {
+            let c = fr.o + side * major;
+            let n = 90;
+            let pts: Vec<V3> = (0..=n)
+                .map(|k| w0 + span * k as f64 / n as f64)
+                .map(|t| c + (side * t.cos() + z * t.sin()) * minor)
+                .filter(|p| f.contains(*p))
+                .collect();
+            if pts.len() > 1 && best.as_ref().is_none_or(|b| pts.len() > b.pts.len()) {
+                best = Some(Circ { c, axis: side.cross(z).norm(), r: minor, pts, v_range: (0.0, 0.0), full: span > 2.0 * PI - 1e-3 });
+            }
+        }
+        best
     }
 
     /// Measure coordinate (2D) of a reference along `axis` (2D unit), and the
@@ -983,6 +1049,7 @@ impl<'a> Annotator<'a> {
             datum: None,
             line_y: -1.0,
             extra: it.collect(),
+            flip: false,
         };
         for g in frames {
             let (prims, w, warns) = self.build_frame(g);
@@ -1002,8 +1069,64 @@ impl<'a> Annotator<'a> {
         self.emit_leadered(&format!("merged callout {}", what), &r, None, prims, b.width() + 1.6, b.height() + 1.6, Term::Arrow, around);
     }
 
+    /// `fromPoint` / `toPoint`: +1 max, -1 min, 0 center.
+    fn end_mode(&mut self, v: &Option<String>, what: &str) -> f64 {
+        match v.as_deref().map(|s| s.trim().to_ascii_lowercase()) {
+            None => 0.0,
+            Some(s) if s == "max" || s == "maximum" || s == "far" => 1.0,
+            Some(s) if s == "min" || s == "minimum" || s == "near" => -1.0,
+            Some(s) if s == "center" || s == "centre" || s.is_empty() => 0.0,
+            Some(s) => {
+                self.warnings.push(format!("{} \"{}\": use \"max\", \"min\" or \"center\"", what, s));
+                0.0
+            }
+        }
+    }
+
+    /// References at one end of a linear dimension, and the circle there when
+    /// the dimension goes to its edge (`mode` max / min) rather than its centre.
+    fn lin_end(&mut self, sel: &Option<String>, what: &str, mode: f64) -> Option<(Vec<RefGeo>, Option<Circ>)> {
+        if mode == 0.0 {
+            return Some((self.refs(sel, what)?, None));
+        }
+        let refs = self.circ_refs(sel)?;
+        let c = refs.iter().find_map(|r| r.circ.clone());
+        if c.is_none() {
+            self.warnings.push(format!("{}Point: {:?} is not a circle, arc or cylinder; measured to it as it is", what, sel));
+        }
+        Some((refs, c))
+    }
+
     fn prep_linear(&mut self, d: &DimSpec, lins: &mut Vec<Lin>) {
-        let (Some(ra), Some(rb)) = (self.refs(&d.from, "from"), self.refs(&d.to, "to")) else { return };
+        let (ma, mb) = (self.end_mode(&d.from_point, "fromPoint"), self.end_mode(&d.to_point, "toPoint"));
+        let (Some((ra, ca)), Some((rb, cb))) = (self.lin_end(&d.from, "from", ma), self.lin_end(&d.to, "to", mb)) else { return };
+        // a circle end: its centre moved across to its far (max) or near (min)
+        // side along the measuring direction `ax3`; returns the two 3D measure
+        // points and the offset of each from its centre
+        let ends = |ax3: V3| -> (V3, V3, V3, V3) {
+            let (a0, b0) = (avg(&ra), avg(&rb));
+            let s = if (b0 - a0).dot(ax3) < 0.0 { -1.0 } else { 1.0 };
+            let off = |c: &Option<Circ>, k: f64| -> V3 {
+                let Some(c) = c else { return V3::default() };
+                let w = ax3 - c.axis * c.axis.dot(ax3);
+                if w.len() < 1e-9 { V3::default() } else { w.norm() * (c.r * k) }
+            };
+            let (oa, ob) = (off(&ca, -s * ma), off(&cb, s * mb));
+            (a0 + oa, b0 + ob, oa, ob)
+        };
+        // the extension line start on a circle end: on its edge, at the end of
+        // a cylinder nearest the dimension, level with the measure point
+        let circ_start = |c: &Option<Circ>, o: V3, m3: V3, axis: V2, toward: V2| -> Option<V2> {
+            let c = c.as_ref()?;
+            if o.len() < 1e-12 {
+                return None;
+            }
+            let q = [c.v_range.0, c.v_range.1]
+                .iter()
+                .map(|v| self.pr.p(c.c + c.axis * *v + o))
+                .max_by(|p, q| p.dot(toward).total_cmp(&q.dot(toward)))?;
+            Some(q + axis * (self.pr.p(m3).dot(axis) - q.dot(axis)))
+        };
         let pa = self.pr.p(avg(&ra));
         let pb = self.pr.p(avg(&rb));
         let dir = d.direction.as_deref().unwrap_or("auto").to_ascii_lowercase();
@@ -1033,9 +1156,10 @@ impl<'a> Annotator<'a> {
                         }
                     }
                 }
-                let a = self.ref_point(&ra, (pb - pa).norm(), V2::default());
-                let b = self.ref_point(&rb, (pb - pa).norm(), V2::default());
-                let value = avg(&ra).dist(avg(&rb));
+                let (a3, b3, oa, ob) = ends((avg(&rb) - avg(&ra)).norm());
+                let a = if oa.len() > 0.0 { self.pr.p(a3) } else { self.ref_point(&ra, (pb - pa).norm(), V2::default()) };
+                let b = if ob.len() > 0.0 { self.pr.p(b3) } else { self.ref_point(&rb, (pb - pa).norm(), V2::default()) };
+                let value = a3.dist(b3);
                 let dt = self.make_text(d, value, "", false);
                 self.aligned(a, b, None, dt);
                 return;
@@ -1050,10 +1174,11 @@ impl<'a> Annotator<'a> {
             .filter(|s| s.horizontal_dim() == horiz)
             .unwrap_or_else(|| self.default_side(mid, horiz));
         let (axis, toward) = if horiz { (v2(1.0, 0.0), v2(0.0, side.sign())) } else { (v2(0.0, 1.0), v2(side.sign(), 0.0)) };
-        let a = self.ref_point(&ra, axis, toward);
-        let b = self.ref_point(&rb, axis, toward);
         let ax3 = if horiz { self.pr.r } else { self.pr.u };
-        let value = (avg(&rb) - avg(&ra)).dot(ax3).abs();
+        let (a3, b3, oa, ob) = ends(ax3);
+        let a = circ_start(&ca, oa, a3, axis, toward).unwrap_or_else(|| self.ref_point(&ra, axis, toward));
+        let b = circ_start(&cb, ob, b3, axis, toward).unwrap_or_else(|| self.ref_point(&rb, axis, toward));
+        let value = (b3 - a3).dot(ax3).abs();
         let dt = self.make_text(d, value, "", false);
         let w = self.text_w(&dt);
         lins.push(Lin { a, b, horiz, side, dt, w, level: 0, src: String::new() });
@@ -1062,9 +1187,9 @@ impl<'a> Annotator<'a> {
     /// Diameter of a cylinder / circle seen side-on, drawn as a linear dimension.
     /// Returns false if the feature is seen face-on (handled later).
     fn prep_diameter_side(&mut self, d: &DimSpec, lins: &mut Vec<Lin>) -> bool {
-        let Some(refs) = self.refs(&d.of, "of") else { return true };
+        let Some(refs) = self.circ_refs(&d.of) else { return true };
         let Some(c) = refs.iter().find_map(|r| r.circ.clone()) else {
-            self.warnings.push(format!("{:?}: diameter/radius needs a circular edge or cylindrical face", d.of));
+            self.warnings.push(format!("{:?}: diameter/radius needs a circle or arc edge, a cylindrical face, or a fillet (torus) face seen in profile", d.of));
             return true;
         };
         if c.axis.dot(self.pr.d).abs() > 0.5 {
@@ -1108,7 +1233,8 @@ impl<'a> Annotator<'a> {
         let al = self.cfg.arrow_length;
         if hi - lo >= l.w + 2.0 * al + 2.0 {
             let m = (lo + hi) / 2.0;
-            (lo - 1.0, hi + 1.0, m - l.w / 2.0 - 0.5, m + l.w / 2.0 + 0.5)
+            let out = if l.dt.flip { al + 2.0 } else { 0.0 };
+            (lo - 1.0 - out, hi + 1.0 + out, m - l.w / 2.0 - 0.5, m + l.w / 2.0 + 0.5)
         } else {
             let t0 = hi + al + 1.5;
             (lo - al - 2.0, t0 + l.w + 1.0, t0 - 0.5, t0 + l.w + 0.5)
@@ -1191,16 +1317,22 @@ impl<'a> Annotator<'a> {
         let mut prims = Vec::new();
         let (lo, hi) = (xa.min(xb), xa.max(xb));
         let al = cfg.arrow_length;
+        // the text fits between the extension lines with the arrows inside
         let inside = hi - lo >= l.w + 2.0 * al + 2.0;
+        // arrows inside pointing out, or outside pointing in ("flipArrows" swaps them)
+        let arrows_in = inside != l.dt.flip;
         let rot = if l.horiz { 0.0 } else { 90.0 };
         let toff = if l.horiz { 1.0 } else { -1.0 };
         let dir_al = w(1.0, 0.0);
-        if inside {
-            prims.push(Prim::Line { a: w(lo, pos), b: w(hi, pos), cls: "thin" });
+        if arrows_in {
+            // the line runs on to the text when it is outside
+            prims.push(Prim::Line { a: w(lo, pos), b: w(if inside { hi } else { hi + al + 1.0 }, pos), cls: "thin" });
             prims.push(self.arrow(w(lo, pos), dir_al));
             prims.push(self.arrow(w(hi, pos), -dir_al));
         } else {
-            prims.push(Prim::Line { a: w(lo - al - 2.0, pos), b: w(hi + al + 1.0, pos), cls: "thin" });
+            // the line runs on past both arrows (to the text, when it is outside)
+            let far = if inside { al + 2.0 } else { al + 1.0 };
+            prims.push(Prim::Line { a: w(lo - al - 2.0, pos), b: w(hi + far, pos), cls: "thin" });
             prims.push(Prim::Line { a: w(lo, pos), b: w(hi, pos), cls: "thin" });
             prims.push(self.arrow(w(lo, pos), -dir_al));
             prims.push(self.arrow(w(hi, pos), dir_al));
@@ -1304,7 +1436,13 @@ impl<'a> Annotator<'a> {
                 Prim::Line { a: a + n * cfg.ext_gap, b: pa + n * cfg.ext_overshoot, cls: "thin" },
                 Prim::Line { a: b + n * cfg.ext_gap, b: pb + n * cfg.ext_overshoot, cls: "thin" },
             ];
-            let stat = vec![Prim::Line { a: pa, b: pb, cls: "thin" }, self.arrow(pa, t), self.arrow(pb, -t)];
+            let stat = if dt.flip {
+                // arrows outside pointing in, the line running on past them
+                let al = cfg.arrow_length + 2.0;
+                vec![Prim::Line { a: pa - t * al, b: pb + t * al, cls: "thin" }, self.arrow(pa, -t), self.arrow(pb, t)]
+            } else {
+                vec![Prim::Line { a: pa, b: pb, cls: "thin" }, self.arrow(pa, t), self.arrow(pb, -t)]
+            };
             let text = self.text_prims(&dt, o, ang, Anchor::Middle);
             self.add_obstacles(&stat);
             self.add_obstacles(&text);
@@ -1412,7 +1550,7 @@ impl<'a> Annotator<'a> {
     }
 
     fn diameter_face_on(&mut self, d: &DimSpec) {
-        let Some(refs) = self.refs(&d.of, "of") else { return };
+        let Some(refs) = self.circ_refs(&d.of) else { return };
         let Some(c) = refs.iter().find_map(|r| r.circ.clone()) else { return };
         let radius = d.kind.eq_ignore_ascii_case("radius");
         let c2 = self.pr.p(c.c);
@@ -1456,10 +1594,13 @@ impl<'a> Annotator<'a> {
                 } else {
                     prims.push(Prim::Line { a: p, b: k2, cls: "thin" });
                     prims.push(self.arrow(p, dir));
-                    if r2 > 4.0 {
+                    if r2 > 4.0 && on_arc(a + PI) {
                         // through-line across the circle with the far arrow
                         prims.push(Prim::Line { a: c2 - dir * r2, b: p, cls: "thin" });
                         prims.push(self.arrow(c2 - dir * r2, dir));
+                    } else if !c.full {
+                        // a diameter of an arc: one arrow, the line running on past the centre
+                        prims.push(Prim::Line { a: c2 - dir * (r2 * 0.25).clamp(1.5, 4.0), b: p, cls: "thin" });
                     }
                 }
                 prims.push(Prim::Line { a: k2, b: end, cls: "thin" });
@@ -1478,7 +1619,7 @@ impl<'a> Annotator<'a> {
                 ];
                 if radius {
                     attrs.push(("data-radius", "1".into()));
-                } else if r2 > 4.0 {
+                } else if r2 > 4.0 && on_arc(a + PI) {
                     attrs.push(("data-through", "1".into()));
                 }
                 let g = ann(
@@ -2036,12 +2177,12 @@ impl<'a> Annotator<'a> {
             }
         };
         // the cylindrical faces picked (an edge stands for its cylinders)
+        let all = cylinders(self.m);
         let faces: Vec<usize> = match sel.kind {
             Kind::Face => sel.ids.clone(),
-            Kind::Edge => sel.ids.iter().flat_map(|&e| self.m.edges[e].faces.iter().copied()).collect(),
+            Kind::Edge => sel.ids.iter().flat_map(|&e| edge_cyl_faces(self.m, &all, e)).collect(),
             Kind::Vertex => vec![],
         };
-        let all = cylinders(self.m);
         let mut picked: Vec<usize> = (0..all.len()).filter(|&i| all[i].faces.iter().any(|f| faces.contains(f))).collect();
         if picked.is_empty() {
             self.warnings.push(format!("thread: {} has no cylindrical face", t.of));
@@ -2424,9 +2565,17 @@ fn cylinders(m: &Model) -> Vec<Cyl> {
         let (t0, t1) = (ts.iter().copied().fold(f64::MAX, f64::min), ts.iter().copied().fold(f64::MIN, f64::max));
         // material outside the surface (normal towards the axis): a hole
         let internal = !f.same_sense;
+        // the same surface: coaxial, same radius, and touching along the axis
+        // (two shafts of the same diameter either side of a collar stay apart)
         let near = |c: &Cyl| {
             let w = o - c.o;
-            (c.r - r).abs() < 1e-4 && c.z.cross(z).len() < 1e-6 && (w - c.z * w.dot(c.z)).len() < 1e-4 && c.internal == internal
+            let (a, b) = ((o + z * t0 - c.o).dot(c.z), (o + z * t1 - c.o).dot(c.z));
+            (c.r - r).abs() < 1e-4
+                && c.z.cross(z).len() < 1e-6
+                && (w - c.z * w.dot(c.z)).len() < 1e-4
+                && c.internal == internal
+                && a.max(b) > c.t0 - 1e-4
+                && a.min(b) < c.t1 + 1e-4
         };
         if let Some(c) = out.iter_mut().find(|c| near(c)) {
             let (a, b) = ((o + z * t0 - c.o).dot(c.z), (o + z * t1 - c.o).dot(c.z));
@@ -2440,31 +2589,77 @@ fn cylinders(m: &Model) -> Vec<Cyl> {
     out
 }
 
+/// The cylindrical faces an edge stands for: the cylinders it bounds, or for a
+/// circle away from any cylinder (the rim of a chamfer or countersink) the
+/// coaxial cylinder whose end is nearest it.
+fn edge_cyl_faces(m: &Model, all: &[Cyl], ei: usize) -> Vec<usize> {
+    let e = &m.edges[ei];
+    let own: Vec<usize> = e.faces.iter().copied().filter(|f| all.iter().any(|c| c.faces.contains(f))).collect();
+    if !own.is_empty() {
+        return own;
+    }
+    let Curve::Circle { fr, r } = &e.curve else { return vec![] };
+    let (o, z) = (fr.o, fr.z.norm());
+    all.iter()
+        .filter(|c| {
+            let w = o - c.o;
+            c.z.cross(z).len() < 1e-6 && (w - c.z * w.dot(c.z)).len() < 1e-4
+        })
+        .map(|c| {
+            let t = (o - c.o).dot(c.z);
+            let gap = if t < c.t0 { c.t0 - t } else if t > c.t1 { t - c.t1 } else { 0.0 };
+            (gap + (c.r - r).abs(), c)
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, c)| c.faces.clone())
+        .unwrap_or_default()
+}
+
 /// Is the cylinder open at its +axis end (`top`) or its -axis end: does it
-/// end on a face looking outwards there (or widen into a countersink)?
+/// end on a face looking outwards there, widen into a countersink, or break
+/// out through a face across its axis (a slanted or curved wall)?
 fn cyl_end_open(m: &Model, c: &Cyl, top: bool) -> bool {
     let (t, s) = if top { (c.t1, c.z) } else { (c.t0, -c.z) };
     for &fi in &c.faces {
         for &ei in &m.faces[fi].edges {
             let e = &m.edges[ei];
-            if !e.pts.iter().all(|p| ((*p - c.o).dot(c.z) - t).abs() < 1e-3) {
+            // an edge reaching this end (a slanted exit's edge only touches it)
+            if !e.pts.iter().any(|p| ((*p - c.o).dot(c.z) - t).abs() < 1e-3) {
                 continue;
             }
             for &g in e.faces.iter().filter(|g| !c.faces.contains(g)) {
                 let gf = &m.faces[g];
+                // a round face on another axis: the hole / shaft runs out through it
+                let coaxial = || {
+                    let w = gf.surf.fr.o - c.o;
+                    gf.surf.fr.z.norm().cross(c.z).len() < 1e-6 && (w - c.z * w.dot(c.z)).len() < 1e-4
+                };
                 match gf.surf.kind {
                     SurfKind::Plane => {
-                        if gf.plane_normal().is_some_and(|n| n.dot(s) > 0.5) {
+                        if gf.plane_normal().is_some_and(|n| n.dot(s) > 0.5 || (n.dot(c.z).abs() < 0.999 && n.dot(s) > 1e-6)) {
                             return true;
                         }
                     }
+                    SurfKind::Cylinder { .. } | SurfKind::Sphere { .. } | SurfKind::Torus { .. } if !coaxial() => return true,
+                    SurfKind::Cone { .. } if !coaxial() => return true,
                     SurfKind::Cone { .. } => {
-                        // widening: a countersink or chamfer at the mouth
-                        let far = gf.loop_pts.iter().flatten().map(|p| {
-                            let w = *p - c.o;
-                            (w - c.z * w.dot(c.z)).len()
-                        });
-                        if far.fold(0.0, f64::max) > c.r * 1.01 {
+                        // a chamfer at the mouth: widening into a hole's countersink,
+                        // narrowing to a shaft's end
+                        let rad: Vec<f64> = gf
+                            .loop_pts
+                            .iter()
+                            .flatten()
+                            .map(|p| {
+                                let w = *p - c.o;
+                                (w - c.z * w.dot(c.z)).len()
+                            })
+                            .collect();
+                        let open = if c.internal {
+                            rad.iter().copied().fold(0.0, f64::max) > c.r * 1.01
+                        } else {
+                            rad.iter().copied().fold(f64::MAX, f64::min) < c.r * 0.99 && rad.iter().all(|&q| q < c.r * 1.001)
+                        };
+                        if open {
                             return true;
                         }
                     }
