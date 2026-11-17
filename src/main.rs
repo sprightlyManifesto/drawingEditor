@@ -5,6 +5,7 @@
 #![allow(dead_code)] // some parsed STEP data is kept for future use
 
 mod annot;
+mod autodraw;
 mod brep;
 mod config;
 mod geom;
@@ -27,6 +28,11 @@ fn usage() -> ! {
     eprintln!(
         "usage: stepdraw <drawing.json> [part.step] [-o output.svg] [-c config.json]\n\
          \x20      stepdraw serve [folder] [--port 8080] [-c config.json]\n\
+         \x20      stepdraw auto <part.step> [--base] [-o drawing.json]\n\
+         \n\
+         auto: writes a first drawing JSON for a STEP file (views, overall\n\
+         dimensions, hole diameters and positions) next to it; with --base\n\
+         just a base view.\n\
          \n\
          serve: runs the drawing editor at http://127.0.0.1:<port>/ for the drawing\n\
          JSON files in the folder (default: the current directory).\n\
@@ -76,6 +82,11 @@ pub fn load_config(explicit: Option<&str>) -> Result<Config, String> {
     Ok(cfg)
 }
 
+/// The label of a view not at the sheet scale: "SCALE: 2:1".
+fn scale_note(scale: f64) -> Option<String> {
+    ((scale - sheet::get().scale).abs() > 1e-9).then(|| format!("SCALE: {}", scale_text(scale)))
+}
+
 fn scale_text(s: f64) -> String {
     let f = |v: f64| annot::fmt_num(v, 2, true);
     if s >= 1.0 { format!("{}:1", f(s)) } else { format!("1:{}", f(1.0 / s)) }
@@ -104,6 +115,17 @@ fn run() -> Result<Vec<String>, String> {
         let dir = PathBuf::from(pos.get(1).map(String::as_str).unwrap_or("."));
         server::serve(&dir, port, cfg_path.as_deref())?;
         return Ok(vec![]);
+    }
+    if pos.first().map(String::as_str) == Some("auto") {
+        // a first drawing JSON for a STEP file (--base: just a base view)
+        let base_only = pos.iter().any(|a| a == "--base");
+        let rest: Vec<&String> = pos.iter().skip(1).filter(|a| *a != "--base").collect();
+        let Some(step) = rest.first().filter(|_| rest.len() == 1) else { usage() };
+        let step = Path::new(step.as_str());
+        let model = load_model(step)?;
+        let (path, notes) = autodraw::write_for(&model, step, out.as_deref().map(Path::new), base_only)?;
+        eprintln!("wrote {}", path.display());
+        return Ok(notes);
     }
     if pos.is_empty() || pos.len() > 2 {
         usage();
@@ -155,8 +177,8 @@ fn add_projected(
             src: psrc.clone(),
             cuts: cuts_of(&psecs, &psrc),
             section: None,
-            title: None,
-            title_offset: V2::default(),
+            title: scale_note(parent.scale),
+            title_offset: p.title_offset.map_or(V2::default(), |t| v2(t[0], t[1])),
             marks: marks_of(model, &pdets, &psrc),
             detail: None,
         };
@@ -194,7 +216,9 @@ pub fn render(spec: &DrawingSpec, step_path: &Path, cfg: &Config) -> Result<(Str
         model.verts.len()
     );
 
-    sheet::set(sheet::Sheet::of(spec.sheet.as_ref())?);
+    let mut sh = sheet::Sheet::of(spec.sheet.as_ref())?;
+    sh.scale = spec.views.first().map_or(1.0, |v| v.scale);
+    sheet::set(sh);
     let proj = spec.projection.unwrap_or(cfg.projection);
     let mut warnings = Vec::new();
     let mut views: Vec<View> = Vec::new();
@@ -218,8 +242,8 @@ pub fn render(spec: &DrawingSpec, step_path: &Path, cfg: &Config) -> Result<(Str
             src: format!("/views/{}", ci),
             cuts: cuts_of(&secs, &format!("/views/{}", ci)),
             section: None,
-            title: None,
-            title_offset: V2::default(),
+            title: scale_note(vs.scale),
+            title_offset: vs.title_offset.map_or(V2::default(), |t| v2(t[0], t[1])),
             marks: marks_of(&model, &dets, &format!("/views/{}", ci)),
             detail: None,
         };
@@ -273,13 +297,21 @@ pub fn render(spec: &DrawingSpec, step_path: &Path, cfg: &Config) -> Result<(Str
     let _ = writeln!(s, "{}", svg::style(&cfg));
     let _ = writeln!(s, r#"<rect x="0" y="0" width="{}" height="{}" style="fill:#fff;stroke:none"/>"#, sheet::W(), sheet::H());
     let _ = writeln!(s, r#"<g id="sheet" inkscape:label="sheet" transform="translate(0 {})">"#, sheet::H());
-    let _ = writeln!(s, r#"  <g id="border" inkscape:label="border">"#);
-    svg::emit(&mut s, &sheet::border(&cfg), "    ");
-    let _ = writeln!(s, "  </g>");
-    let _ = writeln!(s, r#"  <g id="title_block" inkscape:label="title_block">"#);
-    let base_scale = spec.views[0].scale;
-    svg::emit(&mut s, &sheet::title_block(&cfg, &spec.title, &scale_text(base_scale), proj), "    ");
-    let _ = writeln!(s, "  </g>\n</g>");
+    if sheet::get().border {
+        let _ = writeln!(s, r#"  <g id="border" inkscape:label="border">"#);
+        svg::emit(&mut s, &sheet::border(&cfg), "    ");
+        let _ = writeln!(s, "  </g>");
+        let _ = writeln!(s, r#"  <g id="title_block" inkscape:label="title_block">"#);
+        let base_scale = spec.views[0].scale;
+        svg::emit(&mut s, &sheet::title_block(&cfg, &spec.title, &scale_text(base_scale), proj), "    ");
+        let _ = writeln!(s, "  </g>");
+    } else if cfg.pick_layer {
+        // no border or title block: for the editor, where the title block would be (click to edit it)
+        let _ = writeln!(s, r#"  <g id="title_block" class="tbhit">"#);
+        svg::emit(&mut s, &[svg::Prim::Rect { b: sheet::title_box_drawn(), cls: "tbhit" }], "    ");
+        let _ = writeln!(s, "  </g>");
+    }
+    let _ = writeln!(s, "</g>");
     for v in &views {
         let kind = if v.anchor.is_some() {
             "detail"
@@ -420,7 +452,8 @@ fn add_sections(
             src: src.clone(),
             cuts: vec![],
             section: Some((clip, hatch.0, hatch.1)),
-            title: Some(format!("SECTION {}-{}", sp.label, sp.label)),
+            // a second line with the scale when not at the sheet scale
+            title: Some(format!("SECTION {}-{}", sp.label, sp.label) + &scale_note(scale).map(|n| format!("\n{}", n)).unwrap_or_default()),
             title_offset: sp.title_offset.map_or(V2::default(), |t| v2(t[0], t[1])),
             marks: marks_of(m, &dets, &src),
             detail: None,

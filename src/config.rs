@@ -201,8 +201,9 @@ pub struct DimSpec {
     /// inside pointing out where they would be outside.
     #[serde(rename = "flipArrows")]
     pub flip_arrows: bool,
-    pub origin: Option<String>,
-    pub targets: Vec<String>,
+    /// Ordinate: the zero point, and the features dimensioned from it.
+    pub origin: Option<OrdRef>,
+    pub targets: Vec<OrdRef>,
     /// horizontal | vertical | aligned (linear); x | y (ordinate)
     pub direction: Option<String>,
     /// above | below | left | right
@@ -403,6 +404,8 @@ pub struct SectionSpec {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ProjectedSpec {
     pub name: Option<String>,
+    /// Move of the view's "SCALE: 2:1" label (when not at the sheet scale) from under the view [x, y] (sheet mm).
+    pub title_offset: Option<[f64; 2]>,
     /// top | bottom | left | right | rear : the side the view is looked at from.
     pub position: String,
     pub hidden_lines: Option<bool>,
@@ -423,6 +426,8 @@ pub struct ProjectedSpec {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ViewSpec {
     pub name: String,
+    /// Move of the view's "SCALE: 2:1" label (when not at the sheet scale) from under the view [x, y] (sheet mm).
+    pub title_offset: Option<[f64; 2]>,
     /// View direction: vector from the part towards the viewer.
     pub direction: [f64; 3],
     /// Vector that should point up on the sheet.
@@ -485,11 +490,13 @@ impl NamedFits {
 pub struct SheetSpec {
     pub size: String,
     pub orientation: String,
+    /// false: no drawing border and no title block
+    pub border: bool,
 }
 
 impl Default for SheetSpec {
     fn default() -> Self {
-        SheetSpec { size: "A3".into(), orientation: "landscape".into() }
+        SheetSpec { size: "A3".into(), orientation: "landscape".into(), border: true }
     }
 }
 
@@ -502,4 +509,28 @@ pub struct DrawingSpec {
     #[serde(default, alias = "title_block")]
     pub title: TitleBlock,
     pub views: Vec<ViewSpec>,
+}
+
+/// A feature of an ordinate dimension: a selector, or `{ "of": selector,
+/// "gap": mm }` with the gap between the feature and the start of its leader
+/// (sheet mm; default config `ext_gap`).
+#[derive(Debug, Clone, Default)]
+pub struct OrdRef {
+    pub of: String,
+    pub gap: Option<f64>,
+}
+
+impl<'de> Deserialize<'de> for OrdRef {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            Sel(String),
+            Obj { of: String, #[serde(default)] gap: Option<f64> },
+        }
+        Ok(match Raw::deserialize(d).map_err(|_| serde::de::Error::custom("an ordinate feature is a selector or { \"of\": selector, \"gap\": mm }"))? {
+            Raw::Sel(of) => OrdRef { of, gap: None },
+            Raw::Obj { of, gap } => OrdRef { of, gap },
+        })
+    }
 }

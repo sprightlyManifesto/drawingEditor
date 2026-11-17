@@ -217,6 +217,7 @@ pub fn plane_cut(m: &Model, c: V3, n: V3) -> Vec<Vec<V3>> {
                     }
                 }
             }
+            SurfKind::BSpline(ref b) => out.extend(f.bspline_contour(&|u, v| (b.eval(u, v) - c).dot(n))),
             SurfKind::Other(_) => out.extend(other_cut(m, fi, c, n)),
         }
     }

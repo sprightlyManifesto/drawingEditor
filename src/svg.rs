@@ -233,6 +233,7 @@ pub fn style(cfg: &crate::config::Config) -> String {
   .label {{ fill: #444; }}
   .title {{ font-weight: bold; }}
   .pick {{ display: none; }}
+  .tbhit {{ fill: none; stroke: none; }}
 </style>"#,
         vis = cfg.line_visible,
         hid = cfg.line_hidden,

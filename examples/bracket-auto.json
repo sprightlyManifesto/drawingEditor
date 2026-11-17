@@ -1,0 +1,81 @@
+{
+  "step_file": "bracket.step",
+  "title": {
+    "drawing_number": "BRACKET",
+    "description": "BRACKET",
+    "material": "",
+    "finish": "",
+    "notes": "REMOVE ALL BURRS AND SHARP EDGES.",
+    "revision": "A",
+    "drawn_by": "",
+    "date": "2026-11-16"
+  },
+  "views": [
+    {
+      "name": "top",
+      "direction": [0, 0, 1],
+      "up": [0, 1, 0],
+      "scale": 2.0,
+      "dimensions": [
+        {
+          "type": "linear",
+          "from": "faces('%PLANE').faces('<X')",
+          "to": "faces('%PLANE').faces('>X')",
+          "direction": "horizontal",
+          "side": "below"
+        },
+        {
+          "type": "linear",
+          "from": "faces('%PLANE').faces('<Y')",
+          "to": "faces('%PLANE').faces('>Y')",
+          "direction": "vertical",
+          "side": "left"
+        },
+        {
+          "type": "diameter",
+          "of": "faces('<X[2]')",
+          "text": "Ø<> THRU"
+        },
+        {
+          "type": "diameter",
+          "of": "faces('>X[2]')",
+          "text": "Ø<> THRU"
+        },
+        {
+          "type": "ordinate",
+          "origin": "faces('%PLANE').faces('<X')",
+          "targets": [
+            "faces('<X[2]')",
+            "faces('>X[2]')"
+          ],
+          "direction": "x",
+          "side": "below"
+        },
+        {
+          "type": "ordinate",
+          "origin": "faces('%PLANE').faces('<Y')",
+          "targets": [
+            "faces('<X[2]')",
+            "faces('>X[2]')"
+          ],
+          "direction": "y",
+          "side": "left"
+        }
+      ],
+      "projected": [
+        {
+          "position": "right",
+          "dimensions": [
+            {
+              "type": "linear",
+              "from": "faces('%PLANE').faces('<Z')",
+              "to": "faces('%PLANE').faces('>Z')",
+              "direction": "horizontal",
+              "side": "below"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

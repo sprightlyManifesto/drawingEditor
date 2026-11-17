@@ -112,7 +112,14 @@ fn handle(stream: TcpStream, root: &Path, port: u16, cfg_path: Option<&str>) -> 
     match (req.method.as_str(), path) {
         ("GET", "/") | ("GET", "/index.html") => respond(&stream, "200 OK", "text/html; charset=utf-8", EDITOR.as_bytes()),
         ("GET", "/api/help") => respond(&stream, "200 OK", "text/markdown; charset=utf-8", HELP.as_bytes()),
-        ("GET", "/api/files") => respond_json(&stream, "200 OK", &json!({ "folder": root.display().to_string(), "files": list_drawings(root) })),
+        ("GET", "/api/files") => respond_json(&stream, "200 OK", &json!({ "folder": root.display().to_string(), "files": list_drawings(root), "steps": list_steps(root) })),
+        ("POST", "/api/autodraw") => {
+            let v = match autodraw_request(root, &req.body) {
+                Ok(v) => v,
+                Err(e) => json!({ "error": e }),
+            };
+            respond_json(&stream, "200 OK", &v)
+        }
         ("POST", "/api/resolve") => {
             let v = match resolve_request(root, &req.body) {
                 Ok(v) => v,
@@ -171,6 +178,52 @@ fn list_drawings(root: &Path) -> Vec<String> {
     }
     out.sort();
     out
+}
+
+/// STEP files under `root`, relative to it.
+fn list_steps(root: &Path) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut stack = vec![(root.to_path_buf(), 0)];
+    while let Some((d, depth)) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        for e in rd.flatten() {
+            let p = e.path();
+            let name = e.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') || name == "target" || name == "node_modules" {
+                continue;
+            }
+            let lower = name.to_ascii_lowercase();
+            if p.is_dir() {
+                if depth < 4 {
+                    stack.push((p, depth + 1));
+                }
+            } else if (lower.ends_with(".step") || lower.ends_with(".stp"))
+                && let Ok(rel) = p.strip_prefix(root)
+            {
+                out.push(rel.to_string_lossy().replace('\\', "/"));
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Write a first drawing JSON for a STEP file in the folder (next to it, never
+/// over an existing file) and return its path.
+fn autodraw_request(root: &Path, body: &[u8]) -> Result<Value, String> {
+    let req: Value = serde_json::from_slice(body).map_err(|e| format!("bad request: {}", e))?;
+    let rel = req.get("step").and_then(Value::as_str).ok_or("bad request: expected \"step\"")?;
+    let lower = rel.to_ascii_lowercase();
+    if !(lower.ends_with(".step") || lower.ends_with(".stp")) {
+        return Err(format!("{} is not a STEP file", rel));
+    }
+    let step = inside(root, rel)?;
+    // "auto": views and dimensions; "base": just a base view
+    let base_only = req.get("mode").and_then(Value::as_str) == Some("base");
+    let (path, notes) = with_model(&step, |m| crate::autodraw::write_for(m, &step, None, base_only))?;
+    let saved = path.strip_prefix(root).map(|r| r.to_string_lossy().replace('\\', "/")).unwrap_or_else(|_| path.to_string_lossy().to_string());
+    eprintln!("wrote {}", saved);
+    Ok(json!({ "path": saved, "notes": notes }))
 }
 
 /// `rel` resolved inside `root`, or an error if it is outside or missing.
@@ -272,6 +325,16 @@ fn selector_request(root: &Path, body: &[u8]) -> Result<String, String> {
         };
         if ids.iter().any(|&i| i >= n) {
             return Err("the model has changed; re-render the drawing".into());
+        }
+        // "cylinder": edges stand for the cylinders they bound (a thread picked by its circle)
+        if kind == Kind::Edge && req.get("cylinder").and_then(Value::as_bool) == Some(true) {
+            let all = crate::annot::cylinders(m);
+            let mut faces: Vec<usize> = ids.iter().flat_map(|&e| crate::annot::edge_cyl_faces(m, &all, e)).collect();
+            faces.sort();
+            faces.dedup();
+            if !faces.is_empty() {
+                return Ok(crate::selector::find_selector(m, Kind::Face, &faces));
+            }
         }
         Ok(crate::selector::find_selector(m, kind, &ids))
     })

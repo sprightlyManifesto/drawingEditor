@@ -8,6 +8,8 @@ A drawing is one JSON file: the STEP part to draw, the sheet and title block, an
 
 ## Smallest drawing
 
+To start from a generated drawing instead, use **New from STEP…** in the editor, or `stepdraw auto part.step`: it writes a drawing with the views, overall dimensions and hole diameters and positions filled in.
+
 One view of the part, looking at it from the front, with nothing on it:
 
 ```json
@@ -45,7 +47,7 @@ A front view with the top and right views projected from it, and an overall leng
 |---|---|---|---|
 | `step_file` | string | | The STEP part, relative to the JSON file. It can be given on the command line instead. |
 | `projection` | `"third"` or `"first"` | config.json (`"third"`) | Projection system. `"3rd"`, `"third_angle"`, `"1st"` and `"first_angle"` also work. |
-| `sheet` | object | A3 landscape | `{ "size": "A0".."A4", "orientation": "landscape" or "portrait" }` |
+| `sheet` | object | A3 landscape | `{ "size": "A0".."A4", "orientation": "landscape" or "portrait", "border": false }`. `"border": false` leaves out the drawing border and the title block; the views may then use their space. |
 | `title` | object | | Title block text (also accepted as `title_block`). See [Title block](#title-block). |
 | `views` | list | *required* | Base views. See [Base views](#base-views). |
 
@@ -98,9 +100,10 @@ A base view looks at the part from a direction you give. The views made from it 
 | `name` | string | *required* | View name; also the SVG group id. |
 | `direction` | [x, y, z] | *required* | Vector from the part towards the viewer. |
 | `up` | [x, y, z] | Z, or Y for views along Z | Model direction that points up on the sheet. |
-| `scale` | number | 1 | Drawing scale (2 = twice full size). |
+| `scale` | number | 1 | Drawing scale (2 = twice full size). The first base view's scale is the sheet scale shown in the title block; a view at another scale is labelled "SCALE: 2:1" (a section gets it as a second line under "SECTION A-A"). |
 | `location` | [x, y] | placed for you | Sheet position of the view centre. A view with a `location` is not moved by the layout. |
 | `hidden_lines` | true / false | config.json (false) | Draw hidden edges dashed. |
+| `title_offset` | [x, y] | [0, 0] | Moves the view's "SCALE: 2:1" label from its place under the view (sheet mm). The label is shown when the view is not at the sheet scale (the first base view's scale, shown in the title block). |
 | `projected` | list | | [Projected views](#projected-views) made from this view. |
 | `sections` | list | | [Section views](#section-views) cut from this view. |
 | `details` | list | | [Detail views](#detail-views) of parts of this view. |
@@ -136,6 +139,7 @@ A projected view looks at its parent view from one side and stays aligned with i
 | `position` | string | *required* | `top`, `bottom`, `left`, `right` or `rear` (`above`/`plan`, `below`/`underside` and `back` also work). |
 | `name` | string | `<parent>_<position>` | View name. |
 | `distance` | number | placed for you | Sheet mm from the parent's centre along the projection axis. A view with a `distance` is not moved by the layout. |
+| `title_offset` | [x, y] | [0, 0] | Moves the view's "SCALE: 2:1" label from its place under the view (sheet mm). The label is shown when the view is not at the sheet scale (the first base view's scale, shown in the title block). |
 | `hidden_lines` | true / false | as the parent | Draw hidden edges. |
 | `projected`, `sections`, `details` | lists | | Views made from this one. |
 | annotation lists | lists | | As for base views. |
@@ -182,7 +186,7 @@ A section view cuts the part with a plane and looks at the cut. The plane is squ
 
 - **The section view:** material in front of the plane is removed, the cut faces are outlined and hatched, and anything behind them is hidden. Centre lines are drawn only for holes and other round features the plane cuts through.
 - **Placement:** like a projected view looked at from the same side, so in third angle a section looked at from the left goes on the left.
-- **Surfaces:** the cut outline is computed for planes, cylinders, cones and spheres. A cut through a torus or B-spline face leaves a gap in the outline.
+- **Surfaces:** the cut outline is computed for planes, cylinders, cones, spheres, tori (fillets) and B-spline surfaces. Other surface types are bridged with a curve tangent to the faces either side.
 
 A section through a point, with closer hatching:
 
@@ -256,7 +260,7 @@ Fields for all dimension types:
 | `flipArrows` | true / false | false | `linear`, and `diameter` / `radius` seen side-on: the arrows the other way round. Where they would sit inside the extension lines they go outside, pointing in, and where they would be outside (a short dimension) they go inside, pointing out. The text stays where it was. |
 | `fromPoint`, `toPoint` | `"center"` / `"max"` / `"min"` | `"center"` | `linear`, when `from` / `to` is a circle, arc or cylinder: measure to its centre, to its far side (`max`: the largest distance the dimension can be) or to its near side (`min`: the smallest). |
 | `of` | selector | | `diameter` and `radius`: the feature: a circle or arc edge, a cylindrical face, or a fillet (torus) face where it shows in profile. Either type works on any of these, so a radius can be shown as a diameter and the other way round (in the editor, **→ Radius** / **→ Diameter** in the dimension's JSON window, which also swaps `R<>` / `Ø<>` in `text`). |
-| `origin`, `targets` | selector, list of selectors | | `ordinate`: the zero and the features measured from it. |
+| `origin`, `targets` | selector, list of selectors | | `ordinate`: the zero and the features measured from it. Each can instead be `{ "of": selector, "gap": mm }`, where `gap` sets how far from that feature its leader starts (sheet mm; default `ext_gap` in config.json, 1). In the editor, drag the handle on the end of a label's leader to set it. |
 | `direction` | string | the larger offset | `linear`: `horizontal`, `vertical` or `aligned`. `ordinate`: `x` or `y`. |
 | `side` | string | the side of the view's centre the feature is on | `above`, `below` (horizontal), `left` or `right` (vertical) of the view. |
 | `text` | string | the value | Text; `<>` stands for the measured value, e.g. `"2X Ø<> THRU"`. Without `<>` the text replaces the value. |
@@ -282,7 +286,7 @@ What a feature contributes to a measurement: a vertex gives its point, a straigh
   { "type": "linear", "from": "faces('<Z')", "to": "faces('>Z')", "direction": "vertical", "flipArrows": true },
   { "type": "linear", "from": "faces('%CYLINDER').faces('<Y')", "to": "faces('%CYLINDER').faces('<Y[1]')", "fromPoint": "min", "toPoint": "min", "direction": "vertical" },
   { "type": "angle", "from": "edges('%LINE').edges('<X')", "to": "edges('%LINE').edges('>Y')" },
-  { "type": "ordinate", "origin": "faces('<X')", "targets": ["faces('%CYLINDER').faces('<X')", "faces('%CYLINDER').faces('>X')"],
+  { "type": "ordinate", "origin": "faces('<X')", "targets": ["faces('%CYLINDER').faces('<X')", { "of": "faces('%CYLINDER').faces('>X')", "gap": 6 }],
     "direction": "x", "side": "below", "tolerance": "basic" }
 ]
 ```
@@ -421,7 +425,7 @@ A cosmetic thread (ISO 6410) on a hole or shaft, with an optional callout. Seen 
 | `of` | selector | *required* | The threaded cylinder, or any edge of it. A circle or arc picks the cylinder it bounds; a circle that bounds no cylinder (e.g. the outer rim of a chamfer or countersink) picks the coaxial cylinder nearest it. |
 | `size` | text | | `"M6"` (coarse pitch) or `"M10x1.25"`. |
 | `major`, `pitch` | numbers | | Instead of `size`: major diameter and pitch in mm. |
-| `depth` | number | the whole hole or shaft | Thread length from the open end. |
+| `depth` | number | 70% of a blind hole; the whole of a through hole or shaft | Thread length from the open end. |
 | `all_alike` | true / false | false | Also every hole or shaft with the same diameter, length and direction. |
 | `callout` | true / false | true | A leader note such as `2X M6 x 8 DEEP`. |
 | `text` | string | | Callout text instead of the automatic one. |

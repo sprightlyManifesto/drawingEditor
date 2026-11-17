@@ -76,6 +76,7 @@ fn face_info(f: &crate::brep::Face) -> String {
         Cone { r, semi } => format!("CONE Ø{} {}°", fmt_mm(2.0 * r), fmt_mm(semi.to_degrees())),
         Sphere { r } => format!("SPHERE Ø{}", fmt_mm(2.0 * r)),
         Torus { major, minor } => format!("TORUS R{} r{}", fmt_mm(*major), fmt_mm(*minor)),
+        BSpline(_) => "BSPLINE".into(),
         Other(s) => s.to_uppercase(),
     }
 }

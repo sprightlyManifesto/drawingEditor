@@ -52,6 +52,7 @@ pub enum SurfKind {
     Cone { r: f64, semi: f64 },
     Sphere { r: f64 },
     Torus { major: f64, minor: f64 },
+    BSpline(Box<BSurf>),
     Other(String),
 }
 
@@ -69,6 +70,7 @@ impl Surface {
             SurfKind::Cone { .. } => "CONE",
             SurfKind::Sphere { .. } => "SPHERE",
             SurfKind::Torus { .. } => "TORUS",
+            SurfKind::BSpline(_) => "BSPLINE",
             SurfKind::Other(_) => "OTHER",
         }
     }
@@ -80,21 +82,113 @@ impl Surface {
             let l = (q.x * q.x + q.y * q.y).sqrt();
             (l > 1e-12).then(|| (fr.x * q.x + fr.y * q.y) * (1.0 / l))
         };
-        let n = match self.kind {
+        let n = match &self.kind {
             SurfKind::Plane => fr.z,
             SurfKind::Cylinder { .. } => radial()?,
             SurfKind::Cone { semi, .. } => radial()? - fr.z * semi.tan(),
             SurfKind::Sphere { .. } => p - fr.o,
-            SurfKind::Torus { major, .. } => p - (fr.o + radial()? * major),
+            SurfKind::Torus { major, .. } => p - (fr.o + radial()? * *major),
+            SurfKind::BSpline(b) => {
+                let (u, v) = b.param(p);
+                b.normal(u, v)?
+            }
             SurfKind::Other(_) => return None,
         };
         (n.len() > 1e-12).then(|| n.norm())
     }
+    /// The point of the surface nearest p (for points meant to be on it).
+    pub fn project(&self, p: V3) -> V3 {
+        let fr = &self.fr;
+        let q = fr.local(p);
+        let rho = (q.x * q.x + q.y * q.y).sqrt();
+        let er = if rho > 1e-12 { (fr.x * q.x + fr.y * q.y) / rho } else { fr.x };
+        match &self.kind {
+            SurfKind::Plane => p - fr.z * (p - fr.o).dot(fr.z),
+            SurfKind::Cylinder { r } => fr.o + er * *r + fr.z * q.z,
+            SurfKind::Cone { r, semi } => {
+                // nearest point on the line rho = r + z tan(semi) in the (rho, z) half-plane
+                let dir = v2(semi.sin(), semi.cos());
+                let t = (v2(rho, q.z) - v2(*r, 0.0)).dot(dir);
+                let (rr, z) = (r + dir.x * t, dir.y * t);
+                fr.o + er * rr + fr.z * z
+            }
+            SurfKind::Sphere { r } => {
+                let w = p - fr.o;
+                if w.len() > 1e-12 { fr.o + w.norm() * *r } else { p }
+            }
+            SurfKind::Torus { major, minor } => {
+                let t = v2(rho - major, q.z);
+                let t = if t.len() > 1e-12 { t.norm() * *minor } else { v2(*minor, 0.0) };
+                fr.o + er * (major + t.x) + fr.z * t.y
+            }
+            SurfKind::BSpline(b) => {
+                let (u, v) = b.param(p);
+                b.eval(u, v)
+            }
+            SurfKind::Other(_) => p,
+        }
+    }
+    /// A point of the silhouette for view direction d near p (p near it):
+    /// on the surface, with the normal square to d.
+    pub fn onto_silhouette(&self, p: V3, d: V3) -> V3 {
+        let p = self.project(p);
+        let fr = &self.fr;
+        match &self.kind {
+            SurfKind::Sphere { r } => {
+                let w = p - fr.o;
+                let w = w - d * w.dot(d);
+                if w.len() > 1e-12 { fr.o + w.norm() * *r } else { p }
+            }
+            SurfKind::Torus { major, minor } => {
+                // at the point's tube angle w, the silhouette is at m cos(u - phi) = -da tan w
+                let q = fr.local(p);
+                let w = q.z.atan2((q.x * q.x + q.y * q.y).sqrt() - major);
+                let (dx, dy, da) = (d.dot(fr.x), d.dot(fr.y), d.dot(fr.z));
+                let m = (dx * dx + dy * dy).sqrt();
+                let c = if w.cos().abs() < 1e-12 || m < 1e-12 { 2.0 } else { -da * w.tan() / m };
+                if c.abs() > 1.0 {
+                    return p;
+                }
+                let phi = dy.atan2(dx);
+                let u0 = q.y.atan2(q.x);
+                let u = [phi + c.acos(), phi - c.acos()].into_iter().min_by(|a, b| wrap_pi(a - u0).abs().total_cmp(&wrap_pi(b - u0).abs())).unwrap();
+                fr.o + (fr.x * u.cos() + fr.y * u.sin()) * (major + minor * w.cos()) + fr.z * (minor * w.sin())
+            }
+            SurfKind::BSpline(b) => {
+                // Newton on g = n . d along its gradient in (u, v)
+                let (mut u, mut v) = b.param(p);
+                let ((u0, u1), (v0, v1)) = (b.urange(), b.vrange());
+                let (hu, hv) = ((u1 - u0) * 1e-5, (v1 - v0) * 1e-5);
+                let g = |u: f64, v: f64| b.normal(u, v).map_or(0.0, |n| n.dot(d));
+                for _ in 0..6 {
+                    let g0 = g(u, v);
+                    if g0.abs() < 1e-10 {
+                        break;
+                    }
+                    let (gu, gv) = ((g(u + hu, v) - g(u - hu, v)) / (2.0 * hu), (g(u, v + hv) - g(u, v - hv)) / (2.0 * hv));
+                    let n2 = gu * gu + gv * gv;
+                    if n2 < 1e-300 {
+                        break;
+                    }
+                    (u, v) = b.wrap(u - g0 * gu / n2, v - g0 * gv / n2);
+                }
+                b.eval(u, v)
+            }
+            _ => p,
+        }
+    }
     pub fn periodic(&self) -> bool {
-        !matches!(self.kind, SurfKind::Plane | SurfKind::Other(_))
+        match &self.kind {
+            SurfKind::Plane | SurfKind::Other(_) => false,
+            SurfKind::BSpline(b) => b.closed_u || b.closed_v,
+            _ => true,
+        }
     }
     /// Parametric coordinates used for point-in-face tests.
     pub fn uv(&self, p: V3) -> V2 {
+        if let SurfKind::BSpline(b) = &self.kind {
+            return b.uv(p);
+        }
         let q = self.fr.local(p);
         if self.periodic() { v2(wrap_2pi(q.y.atan2(q.x)), q.z) } else { v2(q.x, q.y) }
     }
@@ -142,9 +236,296 @@ impl Surface {
                 solve(a, b, c).into_iter().filter(|t| r + (wa + t * da) * k >= -1e-9).collect()
             }
             SurfKind::Sphere { r } => solve(d.dot(d), 2.0 * w.dot(d), w.dot(w) - r * r),
+            SurfKind::Torus { major, minor } => {
+                // within the bounding sphere, sign changes of the implicit
+                // (|q_xy| - R)^2 + q_z^2 - r^2, refined by bisection
+                let big = major + minor;
+                let dd = d.dot(d);
+                let Some(&[t0, t1]) = solve(dd, 2.0 * w.dot(d), w.dot(w) - big * big).get(..2).and_then(|s| <&[f64; 2]>::try_from(s).ok()) else {
+                    return vec![];
+                };
+                let f = |t: f64| {
+                    let q = fr.local(p + d * t);
+                    let a = (q.x * q.x + q.y * q.y).sqrt() - major;
+                    a * a + q.z * q.z - minor * minor
+                };
+                let n = 400;
+                let mut out = Vec::new();
+                let mut ta = t0;
+                let mut fa = f(ta);
+                for i in 1..=n {
+                    let tb = t0 + (t1 - t0) * i as f64 / n as f64;
+                    let fb = f(tb);
+                    if (fa < 0.0) != (fb < 0.0) {
+                        let (mut lo, mut hi, flo) = (ta, tb, fa);
+                        for _ in 0..50 {
+                            let mid = 0.5 * (lo + hi);
+                            if (f(mid) < 0.0) == (flo < 0.0) {
+                                lo = mid;
+                            } else {
+                                hi = mid;
+                            }
+                        }
+                        out.push(0.5 * (lo + hi));
+                    }
+                    ta = tb;
+                    fa = fb;
+                }
+                out
+            }
+            SurfKind::BSpline(ref b) => b.hits(p, d),
             _ => vec![],
         }
     }
+}
+
+/// A B-spline surface (rational or not) of a STEP file, with a grid of
+/// points on it for finding parameters and intersecting rays.
+#[derive(Clone)]
+pub struct BSurf {
+    du: usize,
+    dv: usize,
+    nu: usize,
+    nv: usize,
+    /// control points times their weights, and the weight; [i * nv + j]
+    cw: Vec<[f64; 4]>,
+    ku: Vec<f64>,
+    kv: Vec<f64>,
+    pub closed_u: bool,
+    pub closed_v: bool,
+    gu: usize,
+    gv: usize,
+    grid: Vec<V3>,
+}
+
+/// de Boor on homogeneous points: `d` holds the deg + 1 points of span `k`.
+fn deboor_h(deg: usize, mut d: Vec<[f64; 4]>, knots: &[f64], k: usize, t: f64) -> [f64; 4] {
+    for r in 1..=deg {
+        for j in (r..=deg).rev() {
+            let i = j + k - deg;
+            let den = knots[i + deg + 1 - r] - knots[i];
+            let a = if den.abs() < 1e-15 { 0.0 } else { (t - knots[i]) / den };
+            for c in 0..4 {
+                d[j][c] = (1.0 - a) * d[j - 1][c] + a * d[j][c];
+            }
+        }
+    }
+    d[deg]
+}
+
+fn knot_span(deg: usize, n: usize, knots: &[f64], t: f64) -> usize {
+    let mut k = deg;
+    while k < n - 1 && t >= knots[k + 1] {
+        k += 1;
+    }
+    k
+}
+
+impl std::fmt::Debug for BSurf {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "BSurf {{ degree: {}x{}, control points: {}x{}{} }}", self.du, self.dv, self.nu, self.nv, if self.closed_u || self.closed_v { ", closed" } else { "" })
+    }
+}
+
+impl BSurf {
+    pub fn new(du: usize, dv: usize, ctrl: Vec<Vec<V3>>, w: Option<Vec<Vec<f64>>>, ku: Vec<f64>, kv: Vec<f64>) -> Option<BSurf> {
+        let nu = ctrl.len();
+        let nv = ctrl.first()?.len();
+        if du == 0 || dv == 0 || nu <= du || nv <= dv || ctrl.iter().any(|r| r.len() != nv) || ku.len() != nu + du + 1 || kv.len() != nv + dv + 1 {
+            return None;
+        }
+        let mut cw = Vec::with_capacity(nu * nv);
+        for i in 0..nu {
+            for j in 0..nv {
+                let wt = w.as_ref().and_then(|w| w.get(i)?.get(j).copied()).unwrap_or(1.0);
+                let p = ctrl[i][j];
+                cw.push([p.x * wt, p.y * wt, p.z * wt, wt]);
+            }
+        }
+        let (gu, gv) = ((4 * nu).clamp(16, 96), (4 * nv).clamp(16, 96));
+        let mut b = BSurf { du, dv, nu, nv, cw, ku, kv, closed_u: false, closed_v: false, gu, gv, grid: vec![] };
+        let (u0, u1) = b.urange();
+        let (v0, v1) = b.vrange();
+        b.grid = (0..=gu).flat_map(|i| (0..=gv).map(move |j| (u0 + (u1 - u0) * i as f64 / gu as f64, v0 + (v1 - v0) * j as f64 / gv as f64))).map(|(u, v)| b.eval(u, v)).collect();
+        let size = b.grid.iter().fold(BBox3::default(), |mut bb, p| {
+            bb.add(*p);
+            bb
+        });
+        let tol = size.max.dist(size.min) * 1e-6 + 1e-9;
+        b.closed_u = (0..=4).all(|k| {
+            let v = v0 + (v1 - v0) * k as f64 / 4.0;
+            b.eval(u0, v).dist(b.eval(u1, v)) < tol
+        });
+        b.closed_v = !b.closed_u
+            && (0..=4).all(|k| {
+                let u = u0 + (u1 - u0) * k as f64 / 4.0;
+                b.eval(u, v0).dist(b.eval(u, v1)) < tol
+            });
+        Some(b)
+    }
+    pub fn urange(&self) -> (f64, f64) {
+        (self.ku[self.du], self.ku[self.nu])
+    }
+    pub fn vrange(&self) -> (f64, f64) {
+        (self.kv[self.dv], self.kv[self.nv])
+    }
+    pub fn eval(&self, u: f64, v: f64) -> V3 {
+        let ((u0, u1), (v0, v1)) = (self.urange(), self.vrange());
+        let (u, v) = (u.clamp(u0, u1), v.clamp(v0, v1));
+        let ks = knot_span(self.du, self.nu, &self.ku, u);
+        let kt = knot_span(self.dv, self.nv, &self.kv, v);
+        let col: Vec<[f64; 4]> = (ks - self.du..=ks)
+            .map(|i| deboor_h(self.dv, (kt - self.dv..=kt).map(|j| self.cw[i * self.nv + j]).collect(), &self.kv, kt, v))
+            .collect();
+        let h = deboor_h(self.du, col, &self.ku, ks, u);
+        let w = if h[3].abs() < 1e-15 { 1.0 } else { h[3] };
+        v3(h[0] / w, h[1] / w, h[2] / w)
+    }
+    /// The point and its derivatives along u and v (by differences).
+    fn derivs(&self, u: f64, v: f64) -> (V3, V3, V3) {
+        let ((u0, u1), (v0, v1)) = (self.urange(), self.vrange());
+        let (hu, hv) = ((u1 - u0) * 1e-6, (v1 - v0) * 1e-6);
+        let (ua, ub) = ((u - hu).max(u0), (u + hu).min(u1));
+        let (va, vb) = ((v - hv).max(v0), (v + hv).min(v1));
+        let su = (self.eval(ub, v) - self.eval(ua, v)) / (ub - ua).max(1e-300);
+        let sv = (self.eval(u, vb) - self.eval(u, va)) / (vb - va).max(1e-300);
+        (self.eval(u, v), su, sv)
+    }
+    /// Unit normal at (u, v) (either sense).
+    pub fn normal(&self, u: f64, v: f64) -> Option<V3> {
+        let (_, su, sv) = self.derivs(u, v);
+        let n = su.cross(sv);
+        if n.len() > 1e-12 {
+            return Some(n.norm());
+        }
+        // a degenerate point (a pole): a hair inside the domain
+        let ((u0, u1), (v0, v1)) = (self.urange(), self.vrange());
+        let (u2, v2) = (u + (0.5 * (u0 + u1) - u) * 1e-4, v + (0.5 * (v0 + v1) - v) * 1e-4);
+        let (_, su, sv) = self.derivs(u2, v2);
+        let n = su.cross(sv);
+        (n.len() > 1e-12).then(|| n.norm())
+    }
+    pub fn wrap(&self, u: f64, v: f64) -> (f64, f64) {
+        let ((u0, u1), (v0, v1)) = (self.urange(), self.vrange());
+        let u = if self.closed_u { u0 + (u - u0).rem_euclid(u1 - u0) } else { u.clamp(u0, u1) };
+        let v = if self.closed_v { v0 + (v - v0).rem_euclid(v1 - v0) } else { v.clamp(v0, v1) };
+        (u, v)
+    }
+    /// Parameters of the point of the surface nearest p.
+    pub fn param(&self, p: V3) -> (f64, f64) {
+        let ((u0, u1), (v0, v1)) = (self.urange(), self.vrange());
+        let k = (0..self.grid.len()).min_by(|&a, &b| self.grid[a].dist(p).total_cmp(&self.grid[b].dist(p))).unwrap_or(0);
+        let (i, j) = (k / (self.gv + 1), k % (self.gv + 1));
+        let (mut u, mut v) = (u0 + (u1 - u0) * i as f64 / self.gu as f64, v0 + (v1 - v0) * j as f64 / self.gv as f64);
+        for _ in 0..12 {
+            let (s, su, sv) = self.derivs(u, v);
+            let r = p - s;
+            let (a, b, c) = (su.dot(su), su.dot(sv), sv.dot(sv));
+            let (e, f) = (su.dot(r), sv.dot(r));
+            let det = a * c - b * b;
+            if det.abs() < 1e-300 {
+                break;
+            }
+            let (du, dv) = ((c * e - b * f) / det, (a * f - b * e) / det);
+            (u, v) = self.wrap(u + du, v + dv);
+            if du.abs() < (u1 - u0) * 1e-12 && dv.abs() < (v1 - v0) * 1e-12 {
+                break;
+            }
+        }
+        (u, v)
+    }
+    /// Face-test coordinates: the closed direction (if any) as an angle in x.
+    pub fn uv(&self, p: V3) -> V2 {
+        let (u, v) = self.param(p);
+        self.to_uv(u, v)
+    }
+    pub fn to_uv(&self, u: f64, v: f64) -> V2 {
+        let ((u0, u1), (v0, v1)) = (self.urange(), self.vrange());
+        if self.closed_u {
+            v2(TAU * (u - u0) / (u1 - u0), v)
+        } else if self.closed_v {
+            v2(TAU * (v - v0) / (v1 - v0), u)
+        } else {
+            v2(u, v)
+        }
+    }
+    /// Parameters t of the intersections of the line p + t d with the
+    /// surface: triangles of the grid, then Newton on S(u, v) = p + t d.
+    pub fn hits(&self, p: V3, d: V3) -> Vec<f64> {
+        let ((u0, u1), (v0, v1)) = (self.urange(), self.vrange());
+        let g = |i: usize, j: usize| self.grid[i * (self.gv + 1) + j];
+        let mut out: Vec<f64> = Vec::new();
+        for i in 0..self.gu {
+            for j in 0..self.gv {
+                let (a, b, c, e) = (g(i, j), g(i + 1, j), g(i + 1, j + 1), g(i, j + 1));
+                for (t0, t1, t2, uv) in [(a, b, c, [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)]), (a, c, e, [(0.0, 0.0), (1.0, 1.0), (0.0, 1.0)])] {
+                    let Some((t, bu, bv)) = tri_hit(p, d, t0, t1, t2) else { continue };
+                    // start Newton from the hit's place in the cell
+                    let fu = uv[0].0 * (1.0 - bu - bv) + uv[1].0 * bu + uv[2].0 * bv;
+                    let fv = uv[0].1 * (1.0 - bu - bv) + uv[1].1 * bu + uv[2].1 * bv;
+                    let mut u = u0 + (u1 - u0) * (i as f64 + fu) / self.gu as f64;
+                    let mut v = v0 + (v1 - v0) * (j as f64 + fv) / self.gv as f64;
+                    let mut t = t;
+                    for _ in 0..8 {
+                        let (s, su, sv) = self.derivs(u, v);
+                        let r = s - (p + d * t);
+                        // [su sv -d] (du dv dt) = -r
+                        let m = [[su.x, sv.x, -d.x], [su.y, sv.y, -d.y], [su.z, sv.z, -d.z]];
+                        let Some(x) = solve3(m, [-r.x, -r.y, -r.z]) else { break };
+                        (u, v) = self.wrap(u + x[0], v + x[1]);
+                        t += x[2];
+                        if x[2].abs() < 1e-12 {
+                            break;
+                        }
+                    }
+                    if !out.iter().any(|o| (o - t).abs() < 1e-7) {
+                        out.push(t);
+                    }
+                }
+            }
+        }
+        out
+    }
+}
+
+/// Ray / triangle (Moller-Trumbore): (t, barycentric b1, b2).
+fn tri_hit(p: V3, d: V3, a: V3, b: V3, c: V3) -> Option<(f64, f64, f64)> {
+    let (e1, e2) = (b - a, c - a);
+    let h = d.cross(e2);
+    let det = e1.dot(h);
+    if det.abs() < 1e-14 {
+        return None;
+    }
+    let s = p - a;
+    let bu = s.dot(h) / det;
+    if !(-1e-6..=1.0 + 1e-6).contains(&bu) {
+        return None;
+    }
+    let q = s.cross(e1);
+    let bv = d.dot(q) / det;
+    if bv < -1e-6 || bu + bv > 1.0 + 1e-6 {
+        return None;
+    }
+    Some((e2.dot(q) / det, bu, bv))
+}
+
+fn solve3(m: [[f64; 3]; 3], b: [f64; 3]) -> Option<[f64; 3]> {
+    let det = |m: [[f64; 3]; 3]| {
+        m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
+    };
+    let d = det(m);
+    if d.abs() < 1e-300 {
+        return None;
+    }
+    let mut x = [0.0; 3];
+    for (k, xk) in x.iter_mut().enumerate() {
+        let mut mk = m;
+        for r in 0..3 {
+            mk[r][k] = b[r];
+        }
+        *xk = det(mk) / d;
+    }
+    Some(x)
 }
 
 #[derive(Clone, Debug)]
@@ -170,6 +551,9 @@ pub struct Face {
     pub bbox: BBox3,
     pub center: V3,
     pub edges: Vec<usize>,
+    /// Torus faces: the arc of tube angles the face covers (start, length);
+    /// (u, v) alone can't tell the inside of the tube from the outside.
+    pub tube: Option<(f64, f64)>,
 }
 
 impl Face {
@@ -279,7 +663,168 @@ impl Face {
     }
 
     pub fn contains(&self, p: V3) -> bool {
+        if let (Some((w0, span)), SurfKind::Torus { major, .. }) = (self.tube, &self.surf.kind) {
+            let q = self.surf.fr.local(p);
+            let w = q.z.atan2((q.x * q.x + q.y * q.y).sqrt() - major);
+            if wrap_2pi(w - w0) > span + 1e-6 {
+                return false;
+            }
+        }
         self.contains_uv(self.surf.uv(p))
+    }
+
+    /// The arc of tube angles a torus face covers: the shortest arc holding
+    /// all its boundary points.
+    fn tube_span(surf: &Surface, loops: &[Vec<V3>]) -> Option<(f64, f64)> {
+        let SurfKind::Torus { major, .. } = surf.kind else { return None };
+        let mut ws: Vec<f64> = loops
+            .iter()
+            .flatten()
+            .map(|p| {
+                let q = surf.fr.local(*p);
+                wrap_2pi(q.z.atan2((q.x * q.x + q.y * q.y).sqrt() - major))
+            })
+            .collect();
+        if ws.is_empty() {
+            return None;
+        }
+        ws.sort_by(|a, b| a.total_cmp(b));
+        let (mut gap, mut w0) = (ws[0] + TAU - ws[ws.len() - 1], ws[0]);
+        for i in 1..ws.len() {
+            if ws[i] - ws[i - 1] > gap {
+                gap = ws[i] - ws[i - 1];
+                w0 = ws[i];
+            }
+        }
+        // a whole tube: no limit
+        (gap > 1e-6).then_some((w0, TAU - gap))
+    }
+
+    /// The curves on a B-spline face where g(u, v) = 0 (a silhouette, a
+    /// plane cut), traced over a grid of its parameters (marching squares),
+    /// kept inside the face and joined into polylines.
+    pub fn bspline_contour(&self, g: &dyn Fn(f64, f64) -> f64) -> Vec<Vec<V3>> {
+        let SurfKind::BSpline(b) = &self.surf.kind else { return vec![] };
+        let ((u0, u1), (v0, v1)) = (b.urange(), b.vrange());
+        let (nu, nv) = (b.gu * 3, b.gv * 3);
+        // in a closed direction the grid starts off the seam (a curve along
+        // the seam would sit on the grid's edge) and wraps round
+        let (pu, pv) = (if b.closed_u { 0.37 } else { 0.0 }, if b.closed_v { 0.37 } else { 0.0 });
+        let uu = |i: usize| u0 + (u1 - u0) * (i as f64 + pu) / nu as f64;
+        let vv = |j: usize| v0 + (v1 - v0) * (j as f64 + pv) / nv as f64;
+        let g = |u: f64, v: f64| {
+            let (u, v) = b.wrap(u, v);
+            g(u, v)
+        };
+        let val: Vec<f64> = (0..=nu).flat_map(|i| (0..=nv).map(move |j| (i, j))).map(|(i, j)| g(uu(i), vv(j))).collect();
+        let at = |i: usize, j: usize| val[i * (nv + 1) + j];
+        // a crossing on a grid edge: (i, j, along u?) -> its (u, v)
+        let cross = |i: usize, j: usize, along_u: bool| -> (f64, f64) {
+            let (a, bb) = if along_u { (at(i, j), at(i + 1, j)) } else { (at(i, j), at(i, j + 1)) };
+            let t = if (a - bb).abs() < 1e-300 { 0.5 } else { a / (a - bb) };
+            let (u, v) = if along_u { (uu(i) + (uu(i + 1) - uu(i)) * t, vv(j)) } else { (uu(i), vv(j) + (vv(j + 1) - vv(j)) * t) };
+            b.wrap(u, v)
+        };
+        type Key = (usize, usize, bool);
+        let mut segs: Vec<(Key, Key)> = Vec::new();
+        for i in 0..nu {
+            for j in 0..nv {
+                let c = [at(i, j), at(i + 1, j), at(i + 1, j + 1), at(i, j + 1)];
+                let s: Vec<bool> = c.iter().map(|x| *x < 0.0).collect();
+                // the cell's edges: bottom, right, top, left
+                let edges: [Key; 4] = [(i, j, true), (i + 1, j, false), (i, j + 1, true), (i, j, false)];
+                let crossing: Vec<usize> = (0..4).filter(|&k| s[k] != s[(k + 1) % 4]).collect();
+                match crossing.len() {
+                    2 => segs.push((edges[crossing[0]], edges[crossing[1]])),
+                    4 => {
+                        // a saddle: pair by the centre's sign
+                        let mid = c.iter().sum::<f64>() / 4.0;
+                        if (mid < 0.0) == s[0] {
+                            segs.push((edges[0], edges[1]));
+                            segs.push((edges[2], edges[3]));
+                        } else {
+                            segs.push((edges[0], edges[3]));
+                            segs.push((edges[1], edges[2]));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        // join segments sharing a crossing into chains
+        let mut by_key: HashMap<Key, Vec<usize>> = HashMap::new();
+        for (k, (a, bb)) in segs.iter().enumerate() {
+            by_key.entry(*a).or_default().push(k);
+            by_key.entry(*bb).or_default().push(k);
+        }
+        let mut used = vec![false; segs.len()];
+        let mut chains: Vec<Vec<Key>> = Vec::new();
+        for start in 0..segs.len() {
+            if used[start] {
+                continue;
+            }
+            used[start] = true;
+            let mut chain = vec![segs[start].0, segs[start].1];
+            for dir in 0..2 {
+                loop {
+                    let end = if dir == 0 { *chain.last().unwrap() } else { chain[0] };
+                    let Some(&k) = by_key.get(&end).and_then(|v| v.iter().find(|&&k| !used[k])) else { break };
+                    used[k] = true;
+                    let next = if segs[k].0 == end { segs[k].1 } else { segs[k].0 };
+                    if dir == 0 { chain.push(next) } else { chain.insert(0, next) }
+                }
+            }
+            chains.push(chain);
+        }
+        // to the surface, split where the curve leaves the face
+        let inside = |(u, v): (f64, f64)| self.contains_uv(b.to_uv(u, v));
+        // where the segment from a (inside or not) to c crosses the face's
+        // boundary, by bisection along it
+        let edge = |a: (f64, f64), c: (f64, f64)| {
+            let a_in = inside(a);
+            let (mut lo, mut hi) = (0.0, 1.0);
+            let at = |t: f64| (a.0 + (c.0 - a.0) * t, a.1 + (c.1 - a.1) * t);
+            for _ in 0..40 {
+                let mid = 0.5 * (lo + hi);
+                if inside(at(mid)) == a_in {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            at(if a_in { lo } else { hi })
+        };
+        let mut out = Vec::new();
+        for chain in chains {
+            let pts: Vec<(f64, f64)> = chain.iter().map(|k| cross(k.0, k.1, k.2)).collect();
+            let ins: Vec<bool> = pts.iter().map(|p| inside(*p)).collect();
+            let mut cur: Vec<V3> = Vec::new();
+            for k in 0..pts.len() {
+                // a step across a seam of the parameters is not a step along the curve
+                let jump = k > 0 && ((pts[k].0 - pts[k - 1].0).abs() > 0.5 * (u1 - u0) || (pts[k].1 - pts[k - 1].1).abs() > 0.5 * (v1 - v0));
+                if ins[k] {
+                    if cur.is_empty() && k > 0 && !ins[k - 1] && !jump {
+                        let (u, v) = edge(pts[k - 1], pts[k]);
+                        cur.push(b.eval(u, v));
+                    }
+                    cur.push(b.eval(pts[k].0, pts[k].1));
+                } else {
+                    if !cur.is_empty() && !jump {
+                        let (u, v) = edge(pts[k - 1], pts[k]);
+                        cur.push(b.eval(u, v));
+                    }
+                    if cur.len() > 1 {
+                        out.push(std::mem::take(&mut cur));
+                    } else {
+                        cur.clear();
+                    }
+                }
+            }
+            if cur.len() > 1 {
+                out.push(cur);
+            }
+        }
+        out
     }
 }
 
@@ -440,7 +985,19 @@ impl<'a> Builder<'a> {
         let fr = || self.placement(self.refp(p.get(1))?);
         let dummy = Frame { o: V3::default(), x: v3(1.0, 0.0, 0.0), y: v3(0.0, 1.0, 0.0), z: v3(0.0, 0.0, 1.0) };
         if !e.is_simple() {
+            // a rational B-spline surface is a complex entity
+            if let (Some(bs), Some(kn)) = (e.part("B_SPLINE_SURFACE"), e.part("B_SPLINE_SURFACE_WITH_KNOTS")) {
+                let w = e.part("RATIONAL_B_SPLINE_SURFACE").and_then(|w| w.first()).map(|w| grid_nums(w));
+                if let Some(b) = self.bsurf(bs.first(), bs.get(1), bs.get(2), w, kn.first(), kn.get(1), kn.get(2), kn.get(3))? {
+                    return Ok(Surface { kind: SurfKind::BSpline(Box::new(b)), fr: dummy });
+                }
+            }
             return Ok(Surface { kind: SurfKind::Other(e.name().into()), fr: dummy });
+        }
+        if e.name() == "B_SPLINE_SURFACE_WITH_KNOTS"
+            && let Some(b) = self.bsurf(p.get(1), p.get(2), p.get(3), None, p.get(8), p.get(9), p.get(10), p.get(11))?
+        {
+            return Ok(Surface { kind: SurfKind::BSpline(Box::new(b)), fr: dummy });
         }
         Ok(match e.name() {
             "PLANE" => Surface { kind: SurfKind::Plane, fr: fr()? },
@@ -454,6 +1011,15 @@ impl<'a> Builder<'a> {
             }
             n => Surface { kind: SurfKind::Other(n.into()), fr: dummy },
         })
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn bsurf(&self, du: Option<&P>, dv: Option<&P>, ctrl: Option<&P>, w: Option<Vec<Vec<f64>>>, mu: Option<&P>, mv: Option<&P>, ku: Option<&P>, kv: Option<&P>) -> Result<Option<BSurf>, String> {
+        let deg = |x: Option<&P>| x.and_then(|x| x.as_f64()).unwrap_or(0.0) as usize;
+        let mut rows = Vec::new();
+        for row in ctrl.and_then(|c| c.as_list()).unwrap_or(&[]) {
+            rows.push(self.point_list(Some(row))?);
+        }
+        Ok(BSurf::new(deg(du), deg(dv), rows, w, expand_knots(mu, ku), expand_knots(mv, kv)))
     }
     fn vertex(&mut self, id: usize) -> Result<usize, String> {
         if let Some(&v) = self.vmap.get(&id) {
@@ -483,6 +1049,10 @@ impl<'a> Builder<'a> {
         self.emap.insert(id, self.edges.len() - 1);
         Ok(self.edges.len() - 1)
     }
+}
+
+fn grid_nums(p: &P) -> Vec<Vec<f64>> {
+    p.as_list().map(|l| l.iter().map(nums).collect()).unwrap_or_default()
 }
 
 fn expand_knots(mults: Option<&P>, knots: Option<&P>) -> Vec<f64> {
@@ -731,7 +1301,8 @@ pub fn build(f: &StepFile) -> Result<Model, String> {
         }
         let uv_loops: Vec<Vec<V2>> = loop_pts.iter().map(|l| l.iter().map(|p| surf.uv(*p)).collect()).collect();
         let center = face_center(&surf, &loop_pts, &uv_loops);
-        out_faces.push(Face { surf, same_sense, loops, loop_pts, uv_loops, bbox, center, edges: fedges });
+        let tube = Face::tube_span(&surf, &loop_pts);
+        out_faces.push(Face { surf, same_sense, loops, loop_pts, uv_loops, bbox, center, edges: fedges, tube });
     }
     let mut bbox = BBox3::default();
     for e in &edges {

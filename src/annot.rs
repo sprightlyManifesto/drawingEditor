@@ -1453,11 +1453,13 @@ impl<'a> Annotator<'a> {
     }
 
     fn ordinate(&mut self, d: &DimSpec) {
-        let Some(origin) = self.refs(&d.origin, "origin") else { return };
-        let mut targets = vec![(origin.clone(), true)];
-        for t in &d.targets {
-            match resolve(self.m, t) {
-                Ok(r) => targets.push((r, false)),
+        let Some(origin) = self.refs(&d.origin.as_ref().map(|o| o.of.clone()), "origin") else { return };
+        // (geometry, is the origin, index in "targets" (-1: the origin), leader gap)
+        let gap_of = |o: &OrdRef| o.gap.unwrap_or(self.cfg.ext_gap).max(0.0);
+        let mut targets = vec![(origin.clone(), true, -1i64, d.origin.as_ref().map_or(self.cfg.ext_gap, gap_of))];
+        for (i, t) in d.targets.iter().enumerate() {
+            match resolve(self.m, &t.of) {
+                Ok(r) => targets.push((r, false, i as i64, gap_of(t))),
                 Err(e) => self.warnings.push(e),
             }
         }
@@ -1474,9 +1476,9 @@ impl<'a> Annotator<'a> {
         let o3 = avg(&origin);
         let h = self.h();
         let cfg = self.cfg;
-        let mut items: Vec<(f64, f64, DimText)> = Vec::new(); // (measure coord, start across, text)
+        let mut items: Vec<(f64, f64, DimText, i64, f64)> = Vec::new(); // (measure coord, start across, text, index, gap)
         let mut seen: Vec<f64> = Vec::new();
-        for (r, is_origin) in &targets {
+        for (r, is_origin, idx, gap) in &targets {
             let p = self.ref_point(r, axis, toward);
             let x = p.dot(axis);
             if seen.iter().any(|q| (q - x).abs() < 0.01) {
@@ -1485,7 +1487,7 @@ impl<'a> Annotator<'a> {
             seen.push(x);
             let v = if *is_origin { 0.0 } else { (avg(r) - o3).dot(ax3).abs() };
             let dt = self.make_text(&DimSpec { text: None, gdt: vec![], datum: None, ..d.clone() }, v, "", false);
-            items.push((x, p.dot(toward.norm()) * s, dt));
+            items.push((x, p.dot(toward.norm()) * s, dt, *idx, *gap));
         }
         items.sort_by(|a, b| a.0.total_cmp(&b.0));
         // spread label positions
@@ -1513,9 +1515,11 @@ impl<'a> Annotator<'a> {
         let mut prims = Vec::new();
         let mut groups = Vec::new();
         let mut maxw: f64 = 0.0;
-        for ((x, st, dt), ti) in items.iter().zip(&t) {
+        for ((x, st, dt, idx, gap), ti) in items.iter().zip(&t) {
             let start = st * s; // across coordinate
-            let lp = vec![w(*x, start + s * cfg.ext_gap), w(*x, band), w(*ti, band + s * jog), w(*ti, band + s * (jog + 2.0))];
+            // the leader starts `gap` from the feature, short of the band
+            let a = if (band - (start + s * gap)) * s > 0.5 { start + s * gap } else { band - s * 0.5 };
+            let lp = vec![w(*x, a), w(*x, band), w(*ti, band + s * jog), w(*ti, band + s * (jog + 2.0))];
             let lead = Prim::Poly { pts: lp.clone(), closed: false, cls: "thin" };
             prims.push(lead.clone());
             let tw = self.text_w(dt);
@@ -1529,7 +1533,7 @@ impl<'a> Annotator<'a> {
             prims.extend(text.clone());
             groups.push(ann(
                 "ordinate",
-                vec![],
+                vec![("data-ti", idx.to_string()), ("data-gap", fmt_num(*gap, 3, true))],
                 vec![("data-p0", lp[0]), ("data-p1", lp[1]), ("data-p2", lp[2]), ("data-p3", lp[3])],
                 vec![role("lead", vec![lead]), role("text", text)],
             ));
@@ -2227,7 +2231,8 @@ impl<'a> Annotator<'a> {
             let up = |v: V3| if v.z.abs() > 1e-6 { v.z } else if v.y.abs() > 1e-6 { v.y } else { v.x };
             let from_top = if open0 && open1 { up(c.z) > 0.0 } else { open1 || !open0 };
             let len = c.t1 - c.t0;
-            let depth = t.depth.unwrap_or(len).clamp(0.0, len);
+            // a blind hole is threaded 70% of its length unless told otherwise
+            let depth = t.depth.unwrap_or(if internal && !(open0 && open1) { 0.7 * len } else { len }).clamp(0.0, len);
             let (ta, tb) = if from_top { (c.t1, c.t1 - depth) } else { (c.t0, c.t0 + depth) };
             let full = depth >= len - 1e-6;
             let zd = c.z.dot(d);
@@ -2280,7 +2285,8 @@ impl<'a> Annotator<'a> {
             };
             let through = cyl_end_open(self.m, &c0, false) && cyl_end_open(self.m, &c0, true);
             let len = c0.t1 - c0.t0;
-            let tail = match t.depth {
+            let depth = t.depth.or((internal && !through).then_some(0.7 * len));
+            let tail = match depth {
                 Some(dp) if dp < len - 1e-6 => format!(" x {} DEEP", fmt_num(dp, 2, true)),
                 _ if internal && through => " THRU".to_string(),
                 _ if internal => format!(" x {} DEEP", fmt_num(len, 2, true)),
@@ -2542,18 +2548,18 @@ pub fn gdt_symbol(name: &str, c: V2, s: f64) -> Vec<Prim> {
 /// A cylinder of the model: its faces (a hole is often split in two), axis,
 /// radius, extent along the axis and whether it is a hole.
 #[derive(Clone, Debug)]
-struct Cyl {
-    faces: Vec<usize>,
-    o: V3,
-    z: V3,
-    r: f64,
-    t0: f64,
-    t1: f64,
-    internal: bool,
+pub(crate) struct Cyl {
+    pub faces: Vec<usize>,
+    pub o: V3,
+    pub z: V3,
+    pub r: f64,
+    pub t0: f64,
+    pub t1: f64,
+    pub internal: bool,
 }
 
 /// The model's cylinders, coaxial faces of the same radius merged.
-fn cylinders(m: &Model) -> Vec<Cyl> {
+pub(crate) fn cylinders(m: &Model) -> Vec<Cyl> {
     let mut out: Vec<Cyl> = Vec::new();
     for (fi, f) in m.faces.iter().enumerate() {
         let SurfKind::Cylinder { r } = f.surf.kind else { continue };
@@ -2592,7 +2598,7 @@ fn cylinders(m: &Model) -> Vec<Cyl> {
 /// The cylindrical faces an edge stands for: the cylinders it bounds, or for a
 /// circle away from any cylinder (the rim of a chamfer or countersink) the
 /// coaxial cylinder whose end is nearest it.
-fn edge_cyl_faces(m: &Model, all: &[Cyl], ei: usize) -> Vec<usize> {
+pub(crate) fn edge_cyl_faces(m: &Model, all: &[Cyl], ei: usize) -> Vec<usize> {
     let e = &m.edges[ei];
     let own: Vec<usize> = e.faces.iter().copied().filter(|f| all.iter().any(|c| c.faces.contains(f))).collect();
     if !own.is_empty() {
@@ -2618,7 +2624,7 @@ fn edge_cyl_faces(m: &Model, all: &[Cyl], ei: usize) -> Vec<usize> {
 /// Is the cylinder open at its +axis end (`top`) or its -axis end: does it
 /// end on a face looking outwards there, widen into a countersink, or break
 /// out through a face across its axis (a slanted or curved wall)?
-fn cyl_end_open(m: &Model, c: &Cyl, top: bool) -> bool {
+pub(crate) fn cyl_end_open(m: &Model, c: &Cyl, top: bool) -> bool {
     let (t, s) = if top { (c.t1, c.z) } else { (c.t0, -c.z) };
     for &fi in &c.faces {
         for &ei in &m.faces[fi].edges {
@@ -2640,11 +2646,10 @@ fn cyl_end_open(m: &Model, c: &Cyl, top: bool) -> bool {
                             return true;
                         }
                     }
-                    SurfKind::Cylinder { .. } | SurfKind::Sphere { .. } | SurfKind::Torus { .. } if !coaxial() => return true,
-                    SurfKind::Cone { .. } if !coaxial() => return true,
-                    SurfKind::Cone { .. } => {
-                        // a chamfer at the mouth: widening into a hole's countersink,
-                        // narrowing to a shaft's end
+                    SurfKind::Cylinder { .. } | SurfKind::Sphere { .. } | SurfKind::Torus { .. } | SurfKind::Cone { .. } if !coaxial() => return true,
+                    SurfKind::Cone { .. } | SurfKind::Torus { .. } => {
+                        // a chamfer or round at the mouth: widening into a hole's
+                        // countersink, narrowing to a shaft's end
                         let rad: Vec<f64> = gf
                             .loop_pts
                             .iter()

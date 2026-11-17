@@ -30,12 +30,20 @@
               "of": "faces('%CYLINDER').faces('<Z')",
               "gdt": [ { "characteristic": "total_runout", "tolerance": "0.2", "datums": ["A"] } ]
             },
-            { "type": "diameter", "of": "faces('%CYLINDER').faces('>Z')" },
+            {
+              "type": "diameter",
+              "of": "faces('%CYLINDER').faces('>Z')",
+              "flipArrows": true
+            },
             { "type": "diameter", "of": "faces('%CYLINDER').faces('<Y')" },
             { "type": "linear", "from": "faces('%CYLINDER').faces('>Z[2]')", "to": "faces('%CYLINDER').faces('>X')", "direction": "vertical" },
             { "type": "linear", "from": "faces('%PLANE').faces('<Z')", "to": "faces('%PLANE').faces('>Z')", "direction": "horizontal", "side": "below" },
             { "type": "linear", "from": "faces('%PLANE').faces('<Z')", "to": "faces('%PLANE').faces('>Z[1]')", "direction": "horizontal", "side": "below" },
-            { "type": "linear", "from": "faces('%PLANE').faces('>Z')", "to": "faces('%CYLINDER').faces('<Y')", "direction": "horizontal", "side": "above" }
+            { "type": "linear", "from": "faces('%PLANE').faces('>Z')", "to": "faces('%CYLINDER').faces('<Y')", "direction": "horizontal", "side": "above" },
+            {
+              "type": "diameter",
+              "of": "edges('@12')"
+            }
           ],
           "gdt": [
             { "attach": "faces('%PLANE').faces('<Z')", "characteristic": "total_runout", "tolerance": "0.2", "datums": ["A"] }
@@ -44,7 +52,30 @@
             { "of": "faces('%CYLINDER').faces('>X')", "size": "M6", "callout": false }
           ]
         }
-      ]
+      ],
+      "projected": []
+    },
+    {
+      "name": "front_bottom",
+      "direction": [1, -1, 1],
+      "up": [0.408248, -0.408248, -0.816497],
+      "scale": 0.5,
+      "location": [55.75, 56.92]
+    },
+    {
+      "name": "front_2",
+      "direction": [
+        0,
+        -1,
+        0
+      ],
+      "up": [
+        0,
+        0,
+        1
+      ],
+      "scale": 0.3,
+      "location": [157.82, 74.64]
     }
   ]
 }

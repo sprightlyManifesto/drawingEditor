@@ -21,6 +21,10 @@ pub struct Sheet {
     /// Outer border (trim) offset and drawing-frame offset from the sheet edge.
     pub outer: f64,
     pub frame: f64,
+    /// The border and title block are drawn.
+    pub border: bool,
+    /// The sheet scale: the first base view's (shown in the title block).
+    pub scale: f64,
 }
 
 const SIZES: [(&str, f64, f64); 5] = [("A0", 1189.0, 841.0), ("A1", 841.0, 594.0), ("A2", 594.0, 420.0), ("A3", 420.0, 297.0), ("A4", 297.0, 210.0)];
@@ -38,7 +42,10 @@ impl Sheet {
         let (w, h) = if portrait { (short, long) } else { (long, short) };
         // A4 needs narrower margins to fit the 180 mm title block
         let (outer, frame) = if name == "A4" { (5.0, 10.0) } else { (10.0, 17.0) };
-        Ok(Sheet { w, h, name, outer, frame })
+        let border = spec.is_none_or(|s| s.border);
+        // without a border the views may use the sheet up to a plain margin
+        let frame = if border { frame } else { outer };
+        Ok(Sheet { w, h, name, outer, frame, border, scale: 1.0 })
     }
 }
 
@@ -71,9 +78,20 @@ pub fn frame_box() -> BBox2 {
     BBox2::new(v2(s.frame, s.frame), v2(s.w - s.frame, s.h - s.frame))
 }
 
+/// The title block (nothing when the border is hidden).
 pub fn title_box() -> BBox2 {
     let s = get();
-    BBox2::new(v2(s.w - s.frame - TB_W, s.frame), v2(s.w - s.frame, s.frame + TB_H))
+    if !s.border {
+        return BBox2::empty();
+    }
+    title_box_drawn()
+}
+
+/// Where the title block is drawn (or would be, with the border shown).
+pub fn title_box_drawn() -> BBox2 {
+    let s = get();
+    let f = Sheet::of(Some(&SheetSpec { size: s.name.into(), orientation: if s.w < s.h { "portrait".into() } else { "landscape".into() }, border: true })).map_or(s.frame, |x| x.frame);
+    BBox2::new(v2(s.w - f - TB_W, f), v2(s.w - f, f + TB_H))
 }
 
 pub fn border(cfg: &Config) -> Vec<Prim> {
@@ -143,7 +161,7 @@ fn wrap(s: &str, h: f64, width: f64) -> Vec<String> {
 }
 
 pub fn title_block(cfg: &Config, tb: &TitleBlock, scale: &str, proj: Projection) -> Vec<Prim> {
-    let b = title_box();
+    let b = title_box_drawn();
     let (x0, y0) = (b.min.x, b.min.y);
     let lh = cfg.label_height;
     let th = cfg.text_height;

@@ -124,6 +124,7 @@
   #annSheet[hidden] { display: none; }
   #annSheet label { display: inline-flex; align-items: center; gap: 6px; }
   #annSheet input { width: 6em; }
+  #annSheet input[type=checkbox] { width: auto; }
   #annDlg .head code { color: var(--muted); font: 12px ui-monospace, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   dialog#annDlg { width: min(1280px, calc(100vw - 32px)); }
   #annBody { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
@@ -153,6 +154,7 @@
   /* pick layer (faces / edges / vertices) */
   svg.drawing.picking .pick, svg.drawing .pick.has-sel { display: inline; }
   svg.drawing .pick .pk { fill: none; stroke: none; pointer-events: none; }
+  svg.drawing rect.tbhit { fill: transparent; stroke: #adb5bd; stroke-width: 0.35; stroke-dasharray: 3 2; pointer-events: all; cursor: pointer; }
   svg.drawing.picking .pick [data-face] > path[fill-rule] { fill: transparent; pointer-events: fill; }
   svg.drawing.picking .pick [data-face] > path:not([fill-rule]), svg.drawing.picking .pick [data-edge] > path {
     stroke: transparent; stroke-width: 8px; stroke-linecap: round; vector-effect: non-scaling-stroke; pointer-events: stroke; }
@@ -207,6 +209,15 @@
   #annArrows .pad button { padding: 0; font-size: 12px; line-height: 1; min-width: 0; }
   #annMsg { flex: 1; color: var(--muted); font-size: 12.5px; }
   #annMsg.err { color: #c2410c; }
+  dialog#autoDlg { width: min(460px, calc(100vw - 32px)); border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--ink); padding: 16px; }
+  dialog#autoDlg p { color: var(--muted); font-size: 13px; margin: 8px 0 12px; }
+  dialog#autoDlg label { display: flex; align-items: center; gap: 8px; }
+  dialog#autoDlg select { flex: 1; min-width: 0; }
+  dialog#autoDlg fieldset { border: 1px solid var(--line); border-radius: 8px; margin: 12px 0 0; padding: 6px 10px 8px; }
+  dialog#autoDlg legend { color: var(--muted); font-size: 12.5px; padding: 0 4px; }
+  dialog#autoDlg fieldset label { align-items: flex-start; margin-top: 6px; font-size: 13px; cursor: pointer; }
+  dialog#autoDlg fieldset input { margin-top: 3px; flex: none; }
+  dialog#autoDlg .btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
   .mode { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
   @media (max-width: 640px) { #name { display: none; } footer .long { display: none; } }
 </style>
@@ -217,6 +228,7 @@
   <select id="drawings" title="Drawing JSON files in the served folder" disabled><option value="">Drawings in folder…</option></select>
   <label class="btn" for="file" title="Open a drawing JSON from elsewhere; its STEP file is looked up by name in the served folder">Open JSON…</label>
   <input id="file" type="file" accept=".json,application/json">
+  <button id="autoBtn" disabled title="Make a new drawing for a STEP file in the folder: an auto drawing (views, overall dimensions, holes) or just a base view">New from STEP…</button>
   <button id="rerender" disabled title="Render the JSON again (after editing it), keeping your moves where the annotations still match (R)">Re-render</button>
   <button id="saveJson" disabled title="Save the drawing JSON with your edits (Ctrl+S)">Save</button>
   <button id="saveAs" disabled title="Save the drawing JSON under a new name in the served folder (Ctrl+Shift+S)">Save as…</button>
@@ -252,6 +264,7 @@
     <label>Scale of view <span id="annScaleView"></span> <input id="annScale" type="number" min="0.01" step="0.1" title="Scale of the first base view, shown in the title block (views[0].scale)"></label>
     <label>Sheet <select id="annSize" title="Sheet size"><option>A0</option><option>A1</option><option>A2</option><option>A3</option><option>A4</option></select></label>
     <select id="annOrient" title="Sheet orientation"><option value="landscape">Landscape</option><option value="portrait">Portrait</option></select>
+    <label title="Leave out the drawing border and the title block (the views may then use their space); click the dashed box where the title block was to edit it again"><input id="annNoBorder" type="checkbox"> Hide border and title block</label>
   </div>
   <div id="annBody">
     <div id="annEditor"></div>
@@ -280,6 +293,19 @@
     <button id="annApply" class="primary" title="Use the edit and re-render (Ctrl+Enter); Save writes it to the file">Apply</button>
   </div>
 </dialog>
+<dialog id="autoDlg" aria-label="New drawing from a STEP file">
+  <form method="dialog">
+    <strong>New drawing from a STEP file</strong>
+    <p>stepdraw writes a drawing JSON next to the STEP file (never over an existing one) and opens it here.</p>
+    <label>STEP file <select id="autoStep"></select></label>
+    <fieldset id="autoMode">
+      <legend>Start with</legend>
+      <label><input type="radio" name="autoMode" value="auto"> <span><b>Auto drawing</b>: a base view looking at the side with the most holes, a projected view for each other side with holes, the overall dimensions, the hole diameters and positions, and the diameters of shafts and bosses</span></label>
+      <label><input type="radio" name="autoMode" value="base" checked> <span><b>Base view only</b>: the same base view with nothing on it, to build up yourself</span></label>
+    </fieldset>
+    <div class="btns"><button value="cancel">Cancel</button><button id="autoGo" value="ok" class="primary">Create</button></div>
+  </form>
+</dialog>
 <dialog id="helpDlg" aria-label="Drawing JSON help">
   <div class="hhead">
     <strong>Drawing JSON</strong>
@@ -291,7 +317,7 @@
 </dialog>
 <div id="mergeBar" hidden><span id="mergeText"></span><button id="mergeDone" hidden>Merge</button><button id="mergeCancel">Cancel</button></div>
 <footer>
-  Pick a drawing, then drag annotations or views to move them; <kbd>Tab</kbd> cycles what can be selected (annotations, views, geometry). Aligned views slide only along their projection axis and follow their parent view. Edit the JSON and press Re-render (<kbd>R</kbd>) to update. <span class="long"><kbd>Shift</kbd>-drag a dimension to move only its line (text stays in place along it). A selected datum, or a leader ending in a dot, has a handle on its end at the part: drag it along the edge (past it onto an extension line) or across the face. Double-click resets one item, right-click an annotation to edit its JSON, or a view for arrows that add a projected view on that side and a Section view switch; in Views mode drag a section's arrows to move its cutting plane, or a detail's circle to move it (right-click a detail for its size and shape); drag a view's label (SECTION A-A) to move it relative to its view (click the title block for its JSON and the sheet size), in its JSON window <b>Merge with…</b> puts a thread, note, frame or dimension on the same feature onto its leader (click one, or <kbd>Ctrl</kbd>+click several), <kbd>Del</kbd> deletes the selected one (<kbd>Ctrl</kbd>+<kbd>Z</kbd> brings it back). In Geometry mode click faces, edges and points to get their selector (<kbd>Ctrl</kbd>+click adds).
+  Pick a drawing, then drag annotations or views to move them; <kbd>Tab</kbd> cycles what can be selected (annotations, views, geometry). Aligned views slide only along their projection axis and follow their parent view. Edit the JSON and press Re-render (<kbd>R</kbd>) to update. <span class="long"><kbd>Shift</kbd>-drag a dimension to move only its line (text stays in place along it). A selected datum, or a leader ending in a dot, has a handle on its end at the part: drag it along the edge (past it onto an extension line) or across the face; a selected ordinate label has one on its leader's end nearest the view, to slide that end along the leader. Double-click resets one item, right-click an annotation to edit its JSON, or a view for arrows that add a projected view on that side and a Section view switch; in Views mode drag a section's arrows to move its cutting plane, or a detail's circle to move it (right-click a detail for its size and shape); drag a view's label (SECTION A-A) to move it relative to its view (click the title block for its JSON and the sheet size), in its JSON window <b>Merge with…</b> puts a thread, note, frame or dimension on the same feature onto its leader (click one, or <kbd>Ctrl</kbd>+click several), <kbd>Del</kbd> deletes the selected one (<kbd>Ctrl</kbd>+<kbd>Z</kbd> brings it back). In Geometry mode click faces, edges and points to get their selector (<kbd>Ctrl</kbd>+click adds).
   Arrow keys nudge the selection (<kbd>Shift</kbd> ×10). Drag the background to pan, scroll to zoom.</span>
 </footer>
 
@@ -344,7 +370,7 @@ const arrowOf = g => { const [l, w] = (g.dataset.arrow || "3,1").split(",").map(
 // ------------------------------------------------------------ annotation state
 // Each annotation keeps its offset from where stepdraw put it in data-
 // attributes, so an edited file can be opened and edited again.
-const STATE_KEYS = { linear: ["off", "slide"], angle: ["dr"], leader: ["dx", "dy", "tx", "ty"], ordinate: ["dx", "dy"], free: ["dx", "dy"] };
+const STATE_KEYS = { linear: ["off", "slide"], angle: ["dr"], leader: ["dx", "dy", "tx", "ty"], ordinate: ["dx", "dy", "st"], free: ["dx", "dy"] };
 STATE_KEYS.view = ["dx", "dy"];
 const isView = g => g.classList.contains("view");
 const kindOf = g => isView(g) ? "view" : g.dataset.kind;
@@ -461,9 +487,15 @@ function renderAngle(g) {
 
 function renderOrdinate(g) {
   const ds = g.dataset, d = V(num(ds.dx), num(ds.dy));
+  // the end nearest the view slides along the leader's first leg (st mm; it
+  // stops short of the bend)
+  const p0 = pt(ds.p0), p1 = pt(ds.p1), L = len(sub(p1, p0));
+  const st = Math.min(num(ds.st), L - 0.5);
+  const a = L > 1e-9 ? add(p0, mul(norm(sub(p1, p0)), st)) : p0;
   const lead = clear(part(g, "lead"));
-  lead.appendChild(poly([pt(ds.p0), pt(ds.p1), add(pt(ds.p2), d), add(pt(ds.p3), d)]));
+  lead.appendChild(poly([a, p1, add(pt(ds.p2), d), add(pt(ds.p3), d)]));
   shift(part(g, "text"), d);
+  if (handle && handle._for === g) placeHandle(g, a);
 }
 
 function renderLeader(g) {
@@ -598,9 +630,13 @@ function load(text, name, keep) {
   let kept = false;
   if (keep && keep.anns.length && keep.anns.every(k => k.src) && anns.every(g => g.dataset.src)) {
     // by JSON path (after an entry was deleted or put back, the paths after it shift)
-    const by = new Map();
-    for (const k of keep.anns) { const p = keep.remap ? keep.remap(k.src) : k.src; if (p) by.set(p + "|" + k.kind, k); }
-    anns.forEach(g => { const k = by.get(g.dataset.src + "|" + g.dataset.kind); if (k) for (const key of keysOf(g)) if (k.s[key]) g.dataset[key] = r3(k.s[key]); });
+    // several groups can share a path (each label of an ordinate dimension): numbered in order
+    const by = new Map(), seenOld = new Map(), seenNew = new Map();
+    const nth = (seen, key) => { const n = seen.get(key) || 0; seen.set(key, n + 1); return key + "|" + n; };
+    // (ordinate labels by the index of their feature)
+    const keyOf = (src, kind, ti) => src + "|" + kind + (ti !== undefined ? "|t" + ti : "");
+    for (const k of keep.anns) { const p = keep.remap ? keep.remap(k.src) : k.src; if (p) by.set(nth(seenOld, keyOf(p, k.kind, k.ti)), k); }
+    anns.forEach(g => { const k = by.get(nth(seenNew, keyOf(g.dataset.src, g.dataset.kind, g.dataset.ti))); if (k) for (const key of keysOf(g)) if (k.s[key]) g.dataset[key] = r3(k.s[key]); });
     kept = true;
   } else if (keep && keep.anns.length === anns.length && keep.anns.every((k, i) => k.kind === anns[i].dataset.kind)) {
     anns.forEach((g, i) => { for (const k of keysOf(g)) if (keep.anns[i].s[k]) g.dataset[k] = r3(keep.anns[i].s[k]); });
@@ -639,7 +675,8 @@ function select(g, hl = g) {
 }
 /** A selected leader that doesn't end in an arrow (datum triangle, dot on a face,
  *  target cross) gets a handle on its end at the part (in annotation mode). */
-const tipMovable = g => !isView(g) && kindOf(g) === "leader" && g.dataset.term !== "arrow" && !g.dataset.radius && (g.dataset.mode === "edge" || g.dataset.mode === "fixed");
+const tipMovable = g => !isView(g) && (kindOf(g) === "ordinate" && g.dataset.p0 !== undefined
+  || kindOf(g) === "leader" && g.dataset.term !== "arrow" && !g.dataset.radius && (g.dataset.mode === "edge" || g.dataset.mode === "fixed"));
 let handle = null;     // the handle, in an overlay above the whole drawing so nothing covers it
 /** Put the handle at `p`, a point in `g`'s coordinates. */
 function placeHandle(g, p) {
@@ -655,7 +692,9 @@ function updateHandle() {
   const h = layer.appendChild(el("circle", { class: "handle", r: 1.2 }));
   h._for = selected;
   handle = h;
-  h.appendChild(el("title", {})).textContent = selected.dataset.mode === "edge"
+  h.appendChild(el("title", {})).textContent = kindOf(selected) === "ordinate"
+    ? "Drag to move the end of the leader nearest the view along it (double-click the dimension to reset)"
+    : selected.dataset.mode === "edge"
     ? "Drag to slide the end along the edge (past it, onto an extension line)" : "Drag to move the end on the face";
   render(selected);
 }
@@ -820,8 +859,9 @@ stage.addEventListener("pointerdown", e => {
   if (hd && selected && hd._for === selected) {
     // the leader's end at the part: along the edge, or anywhere on the face
     const g = selected, pos = ev => local(g, ev);
-    const u = g.dataset.mode === "edge" ? norm(sub(pt(g.dataset.e1), pt(g.dataset.e0))) : null;
-    drag = { g, pos, start: pos(e), s0: getState(g), tip: true, u, moved: true };
+    const ord = kindOf(g) === "ordinate";
+    const u = ord ? norm(sub(pt(g.dataset.p1), pt(g.dataset.p0))) : g.dataset.mode === "edge" ? norm(sub(pt(g.dataset.e1), pt(g.dataset.e0))) : null;
+    drag = { g, pos, start: pos(e), s0: getState(g), tip: true, u, ord, moved: true };
     e.preventDefault();
     return;
   }
@@ -894,7 +934,12 @@ stage.addEventListener("pointermove", e => {
   }
   if (drag.tip) {
     const d = sub(drag.pos(e), drag.start);
-    setState(drag.g, Object.assign({}, drag.s0, drag.u ? { tx: drag.s0.tx + dot(d, drag.u) } : { tx: drag.s0.tx + d.x, ty: drag.s0.ty + d.y }));
+    if (drag.ord) {
+      // along the leader: no further than just short of its bend, nor onto the feature
+      const g = drag.g, L = len(sub(pt(g.dataset.p1), pt(g.dataset.p0)));
+      const lo = drag.s0.st - (g.dataset.gap !== undefined ? +g.dataset.gap : 1);
+      setState(g, Object.assign({}, drag.s0, { st: Math.max(lo, Math.min(drag.s0.st + dot(d, drag.u), L - 0.5)) }));
+    } else setState(drag.g, Object.assign({}, drag.s0, drag.u ? { tx: drag.s0.tx + dot(d, drag.u) } : { tx: drag.s0.tx + d.x, ty: drag.s0.ty + d.y }));
     return;
   }
   if (!drag.moved) {
@@ -915,9 +960,28 @@ function endDrag() {
   }
   if (drag && drag.ent && !drag.moved) togglePick(drag.ent, drag.add);
   else if (drag && drag.title && !drag.moved) openTitleEditor();     // a click on the title block
+  else if (drag && drag.tip && drag.ord) {
+    // an ordinate leader's start: written to the JSON as that feature's "gap"
+    const g = drag.g, moved = num(g.dataset.st) - num(drag.s0.st);
+    setState(g, drag.s0);
+    if (Math.abs(moved) > 1e-3) setOrdinateGap(g, Math.max(0, (g.dataset.gap !== undefined ? +g.dataset.gap : 1) + moved));
+  }
   else if (drag && drag.g) commit([{ g: drag.g, before: drag.s0, after: getState(drag.g) }]);
   if (svg) svg.classList.remove("panning");
   drag = null;
+}
+/** Set the leader gap of ordinate label `g`'s feature (its origin or target) in the JSON. */
+async function setOrdinateGap(g, gap) {
+  const ptr = g.dataset.src, ti = +g.dataset.ti;
+  let spec;
+  try { spec = JSON.parse(specText); } catch (e) { setStatus("The drawing JSON could not be read", true); return; }
+  const val = ptr && getPtr(spec, ptr);
+  const ref = val && (ti < 0 ? val.origin : (val.targets || [])[ti]);
+  if (!ref || g.dataset.ti === undefined) { setStatus("Re-render the drawing to set this leader", true); return; }
+  const of = typeof ref === "string" ? ref : ref.of;
+  let next;
+  try { next = putCompact(specText, ptr + (ti < 0 ? "/origin" : "/targets/" + ti), { of, gap: round2(gap) }); } catch (e) { setStatus("Could not set the leader: " + e.message, true); return; }
+  await writeSpec(next, "ordinate leader", `Leader of ${ti < 0 ? "the origin" : "target " + (ti + 1)} starts ${round2(gap)} mm from its feature`);
 }
 stage.addEventListener("pointerup", endDrag);
 stage.addEventListener("pointercancel", endDrag);
@@ -1173,7 +1237,15 @@ function nextDatum(spec) {
 /** A thread for the picked hole / shaft: metric size from the tap drill (hole) or the diameter (shaft). */
 async function guessThread(fs) {
   const f = fs.find(f => f.round || /^CONE/.test(f.info)) || fs.find(f => f.arc) || fs[0];
-  const of = await selectorOf(f.p.kind, [f.p.id]);
+  // a circle or arc stands for the cylinder it bounds, so the thread shows wherever that cylinder does
+  let of = null;
+  if (f.p.kind === "edges" && /^(CIRCLE|ARC)/.test(f.info)) {
+    try {
+      const out = await postJson("/api/selector", Object.assign(sourceBody(), { kind: "edges", ids: [f.p.id], cylinder: true }));
+      if (!out.error) of = out.selector;
+    } catch (e) { /* fall back to the edge */ }
+  }
+  if (!of) of = await selectorOf(f.p.kind, [f.p.id]);
   const d = parseFloat(f.size) * (/^(ARC|TORUS)/.test(f.info) ? 2 : 1);
   // [size, coarse pitch]; tap drill = size - pitch
   const M = [[1.6, .35], [2, .4], [2.5, .45], [3, .5], [4, .7], [5, .8], [6, 1], [8, 1.25], [10, 1.5], [12, 1.75], [14, 2], [16, 2], [18, 2.5], [20, 2.5], [22, 2.5], [24, 3], [27, 3], [30, 3.5], [36, 4], [42, 4.5], [48, 5]];
@@ -1371,7 +1443,7 @@ async function renderDrawing(src, keepMoves) {
     const out = await res.json();
     if (out.error) { setStatus(out.error, true); return; }
     const keep = keepMoves && svg ? {
-      anns: [...svg.querySelectorAll("g.ann")].map(g => ({ kind: g.dataset.kind, src: g.dataset.src, s: getState(g) })),
+      anns: [...svg.querySelectorAll("g.ann")].map(g => ({ kind: g.dataset.kind, src: g.dataset.src, ti: g.dataset.ti, s: getState(g) })),
       remap: takeRemap(),
       // views whose move was just written to the JSON start from where it puts them
       views: Object.fromEntries([...svg.querySelectorAll(":scope > g.view")].filter(g => !(dropViewMoves && dropViewMoves.has(g.id))).map(g => [g.id, getState(g)])),
@@ -1533,6 +1605,9 @@ function schemaFor(kind, spec) {
   const examples = [...new Set([...selectionSelectors(), ...drawingSelectors(spec), ...common])];
   const sel = d => ({ type: "string", description: d + "\n\nCadQuery selector: faces / edges / vertices chained, e.g. faces('%CYLINDER').faces('<X[1]'). " +
     ">X <Y >(1,1,0) max/min centre, >Z[1] n-th group, |Z parallel, #Z perpendicular, +Z / -Z normal, %PLANE %CYLINDER %CONE %SPHERE %TORUS %LINE %CIRCLE, and / or / not.", examples });
+  // an ordinate feature: a selector, or one with the gap before its leader
+  const ordRef = d => ({ anyOf: [sel(d), { type: "object", additionalProperties: false, required: ["of"], properties: {
+    of: sel(d), gap: { type: "number", minimum: 0, description: "Gap between the feature and the start of its leader (sheet mm; default config ext_gap, 1). Dragging the handle on the leader's end sets it." } } }] });
   const datumRef = { type: "string", description: "Datum reference, with modifiers in brackets: \"A\", \"B(M)\", \"A-B(L)\".",
     examples: ["A", "B", "C", "A(M)", "B(M)", "A-B", "A(L)"] };
   const modifier = { type: "string", description: "M (MMC), L (LMC), F (free state), P12 (projected zone 12), T (tangent plane), U0.2 (unequal profile), S (RFS), E (envelope), ST (statistical), CZ (common zone).",
@@ -1592,8 +1667,8 @@ function schemaFor(kind, spec) {
         fromPoint: { enum: ["center", "max", "min"], default: "center", description: "linear, when \"from\" is a circle, arc or cylinder: measure from its centre (default), its far side (max: the largest distance) or its near side (min: the smallest)." },
         toPoint: { enum: ["center", "max", "min"], default: "center", description: "linear, when \"to\" is a circle, arc or cylinder: measure to its centre (default), its far side (max: the largest distance) or its near side (min: the smallest)." },
         of: sel("diameter / radius: a circle or arc edge, or a cylindrical face. Either type works on any of them (switch with → Radius / → Diameter)."),
-        origin: sel("ordinate: the zero point."),
-        targets: { type: "array", items: sel("ordinate: a feature to dimension."), description: "ordinate: features to dimension." },
+        origin: ordRef("ordinate: the zero point."),
+        targets: { type: "array", items: ordRef("ordinate: a feature to dimension."), description: "ordinate: features to dimension; each a selector, or { \"of\": selector, \"gap\": mm } to set where its leader starts." },
         direction: { enum: ["horizontal", "vertical", "aligned", "x", "y"], description: "linear: horizontal / vertical / aligned (default: the dominant axis). ordinate: x / y." },
         side: { enum: ["above", "below", "left", "right"], description: "Side of the view for the dimension." },
         text: { type: "string", description: "Text; <> is replaced by the measured value, e.g. \"2X Ø<> THRU\".", examples: ["<>", "2X Ø<> THRU", "Ø<> x 5 DEEP", "R<> TYP"] },
@@ -1640,7 +1715,7 @@ function schemaFor(kind, spec) {
         size: { type: "string", description: "Metric designation: \"M6\" (coarse pitch) or \"M10x1.25\". Sets the major diameter and pitch.", examples: ["M3", "M4", "M5", "M6", "M8", "M10", "M12", "M16", "M20", "M10x1.25", "M12x1.5"] },
         major: { type: "number", exclusiveMinimum: 0, description: "Major diameter (mm), when there is no metric size." },
         pitch: { type: "number", exclusiveMinimum: 0, description: "Pitch (mm); default the ISO coarse pitch." },
-        depth: { type: "number", exclusiveMinimum: 0, description: "Thread length from the open end (default: the whole hole / shaft). Through holes start at the end highest in the model." },
+        depth: { type: "number", exclusiveMinimum: 0, description: "Thread length from the open end (default: 70% of a blind hole, the whole of a through hole or shaft). Through holes start at the end highest in the model." },
         all_alike: { type: "boolean", description: "Also every alike hole / shaft (same diameter, length and direction); the callout gets nX." },
         callout: { type: "boolean", description: "Leader note with the designation, e.g. 2X M6 x 8 DEEP (default true)." },
         text: { type: "string", description: "Callout text instead of the automatic one." },
@@ -1711,6 +1786,7 @@ function schemaFor(kind, spec) {
       position: { enum: ["top", "bottom", "left", "right", "rear"], description: "Side of the parent view it is looked at from." },
       distance: { type: "number", description: "Distance (sheet mm) from the parent view's centre along the projection axis; set when you move the view. Default: next to the parent." },
       hidden_lines: hidden,
+      title_offset: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2, description: "Move of the view's \"SCALE: 2:1\" label (shown when the view is not at the sheet scale) from its place under the view [x, y] (sheet mm); set when you drag the label." },
       projected: { type: "array", items: { $ref: "#/definitions/projected" }, description: "Views projected from this one (the arrow buttons add them)." },
       sections: { type: "array", items: schemas.sections, description: "Section views of this view." },
       details: { type: "array", items: schemas.details, description: "Detail views of this view." },
@@ -1723,8 +1799,9 @@ function schemaFor(kind, spec) {
       direction: vec3("View direction: from the part towards the viewer, e.g. [0, 0, 1] looks down Z."),
       up: vec3("Model direction that points up on the sheet."),
       location: { type: "array", items: { type: "number" }, description: "Sheet position [x, y] of the view centre, mm from bottom-left." },
-      scale: { type: "number", exclusiveMinimum: 0, description: "View scale (default 1)." },
+      scale: { type: "number", exclusiveMinimum: 0, description: "View scale (default 1). The first base view's is the sheet scale (title block); other views at a different scale get a \"SCALE: 2:1\" label." },
       hidden_lines: hidden,
+      title_offset: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2, description: "Move of the view's \"SCALE: 2:1\" label (shown when the view is not at the sheet scale) from its place under the view [x, y] (sheet mm); set when you drag the label." },
       projected: { type: "array", items: { $ref: "#/definitions/projected" }, description: "Projected views aligned with this one (the arrow buttons add them)." },
       sections: { type: "array", items: schemas.sections, description: "Section views." },
       details: { type: "array", items: schemas.details, description: "Detail views." },
@@ -1857,14 +1934,15 @@ async function openTitleEditor() {
   let spec;
   try { spec = JSON.parse(specText); } catch (e) { setStatus("The drawing JSON could not be read", true); return; }
   const key = "title" in spec || !("title_block" in spec) ? "title" : "title_block";
-  const sheet = Object.assign({ size: "A3", orientation: "landscape" }, spec.sheet || {});
+  const sheet = Object.assign({ size: "A3", orientation: "landscape", border: true }, spec.sheet || {});
   const scale = spec.views && spec.views[0] ? (spec.views[0].scale ?? 1) : 1;
-  editing = { ptr: "/" + key, kind: "title", scale0: scale, sheet0: { size: String(sheet.size).toUpperCase(), orientation: String(sheet.orientation).toLowerCase() } };
+  editing = { ptr: "/" + key, kind: "title", scale0: scale, sheet0: { size: String(sheet.size).toUpperCase(), orientation: String(sheet.orientation).toLowerCase(), border: sheet.border !== false } };
   $("annTitle").textContent = "Edit title block";
   $("annScaleView").textContent = spec.views && spec.views[0] ? `'${spec.views[0].name}'` : "";
   $("annScale").value = scale;
   $("annSize").value = editing.sheet0.size;
   $("annOrient").value = editing.sheet0.orientation;
+  $("annNoBorder").checked = !editing.sheet0.border;
   await openEditorWith("/" + key, "title", spec[key] || {}, spec, "Apply re-renders with the edit; Save writes it to the file");
 }
 /** The drawing JSON with the edited title block, and the scale and sheet if they were changed. */
@@ -1874,10 +1952,12 @@ function titleSpecWith(val) {
   if (!(sc > 0)) throw new Error("the scale must be a number above 0");
   if (sc !== editing.scale0) text = putSpec(text, "/views/0/scale", sc);
   const sheet = { size: $("annSize").value, orientation: $("annOrient").value };
-  if (sheet.size !== editing.sheet0.size || sheet.orientation !== editing.sheet0.orientation) text = putSpec(text, "/sheet", sheet);
+  const border = !$("annNoBorder").checked;
+  if (!border) sheet.border = false;
+  if (sheet.size !== editing.sheet0.size || sheet.orientation !== editing.sheet0.orientation || border !== editing.sheet0.border) text = putSpec(text, "/sheet", sheet);
   return text;
 }
-for (const id of ["annScale", "annSize", "annOrient"]) $(id).addEventListener("input", () => schedulePreview());
+for (const id of ["annScale", "annSize", "annOrient", "annNoBorder"]) $(id).addEventListener("input", () => schedulePreview());
 // ------------------------------------------------------------ adding projected views from the view editor
 let arrowProjection = null;
 /** The `position` of a projected view placed in sheet direction `dir`. */
@@ -2058,6 +2138,23 @@ async function deleteSelected() {
   if (/^\/views\/\d+$/.test(ptr) && spec.views.length <= 1) { setStatus("The drawing's only view can't be deleted", true); return; }
   const val = getPtr(spec, ptr);
   if (val === undefined) { setStatus("This item is not in the drawing JSON any more; re-render first", true); return; }
+  // one label of an ordinate dimension: just its feature
+  const ti = selected.dataset.ti !== undefined ? +selected.dataset.ti : -1;
+  if (kindOf(selected) === "ordinate" && ti >= 0 && Array.isArray(val.targets) && val.targets.length > 1) {
+    let next;
+    try { next = removeSpec(specText, ptr + "/targets/" + ti); } catch (e) { setStatus(e.message, true); return; }
+    // the other labels keep their moves: those after it move up one
+    for (const g of groupsOf(ptr)) {
+      const k = +g.dataset.ti;
+      if (g === selected) g.dataset.ti = "gone"; else if (k > ti) g.dataset.ti = k - 1;
+    }
+    const label = (selected.querySelector("text") || {}).textContent || "";
+    select(null);
+    await writeSpec(next, "ordinate target", `Deleted the ${label.trim() || "ordinate"} label of ${entryName(ptr, val)}`);
+    const last = deleted[deleted.length - 1];
+    if (last && last.what === "ordinate target") last.ord = { ptr, ti };     // for undo: the labels after it move back down
+    return;
+  }
   let next;
   try { next = removeSpec(specText, ptr); } catch (e) { setStatus(e.message, true); return; }
   const parts = ptr.split("/"), i = +parts.pop(), arr = parts.join("/");
@@ -2074,7 +2171,8 @@ async function restoreDeleted() {
   const d = deleted.pop();
   if (!d || busy || !specText) return;
   if (d.snap !== undefined) {
-    // a merge / unmerge: the drawing JSON as it was
+    // a merge / unmerge (or a deleted ordinate label): the drawing JSON as it was
+    if (d.ord && svg) for (const g of groupsOf(d.ord.ptr)) { const k = +g.dataset.ti; if (k >= d.ord.ti) g.dataset.ti = k + 1; }
     source.json = d.snap; source.file = null; specText = d.snap;
     await renderDrawing(source, true);
     updateDirty();
@@ -2391,6 +2489,7 @@ stage.addEventListener("contextmenu", e => {
   if (mk) { if (mode === "view") select(mk); openDetailMenu(mk.dataset.detail, e.clientX, e.clientY); return; }
   const v = viewAt(e);
   if (v) openViewMenu(v, e.clientX, e.clientY);
+  else if (mode === "view") openSheetMenu(e.clientX, e.clientY);
 });
 
 
@@ -3046,6 +3145,32 @@ function openViewMenu(v, x, y) {
     const [ccw, cw] = row.querySelectorAll(".rot button");
     ccw.onclick = () => { closeViewMenu(); rotateView(ptr, val, 1); };
     cw.onclick = () => { closeViewMenu(); rotateView(ptr, val, -1); };
+    // its scale; the first base view's is the sheet scale in the title block
+    const first = ptr === "/views/0";
+    const sr = m.appendChild(document.createElement("label"));
+    sr.className = "row";
+    sr.innerHTML = `<span></span><input type="number" min="0.01" step="0.25">`;
+    sr.querySelector("span").textContent = first ? "Sheet scale" : "Scale";
+    sr.title = first ? "Scale of this view, which is the sheet scale shown in the title block (its projected, section and detail views follow)"
+      : "Scale of this view (its projected, section and detail views follow)";
+    const si = sr.querySelector("input");
+    si.value = val.scale ?? 1;
+    const setScale = () => {
+      const v = parseFloat(si.value);
+      if (!(v > 0)) { si.value = val.scale ?? 1; return; }
+      if (v === (val.scale ?? 1)) return;
+      closeViewMenu();
+      setViewScale(ptr, v, `${name}: scale ${scaleText(v)}${first ? " (the sheet scale)" : ""}`);
+    };
+    si.addEventListener("change", setScale);
+    si.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); setScale(); } });
+  }
+  // a projected view made a base view of its own
+  if (kind === "projected") {
+    const cbv = m.appendChild(document.createElement("button"));
+    cbv.className = "adddet"; cbv.textContent = "Convert to base view";
+    cbv.title = "Make this a base view looking the same way, taken out of its parent's projection group so it moves on its own (its annotations and the views made from it go along)";
+    cbv.onclick = () => { closeViewMenu(); toBaseView(v, ptr); };
   }
   // a detail view centred where the menu was opened
   const db = m.appendChild(document.createElement("button"));
@@ -3066,6 +3191,92 @@ function openViewMenu(v, x, y) {
   const r = m.getBoundingClientRect();
   m.style.left = Math.max(4, Math.min(x, innerWidth - r.width - 4)) + "px";
   m.style.top = Math.max(4, Math.min(y, innerHeight - r.height - 4)) + "px";
+}
+/** A view's position in the SVG (y down), its move included. */
+function sheetPos(g) {
+  const m = /translate\(\s*([-\d.e]+)[ ,]+([-\d.e]+)/.exec(g.getAttribute("transform") || "");
+  return m ? [round3(+m[1]), round3(+m[2])] : null;
+}
+/** The sheet height: `location` is measured up from the bottom of the sheet. */
+function sheetHeight() {
+  for (const g of svg.querySelectorAll(":scope > g.view[data-loc]")) {
+    const p = sheetPos(g);
+    if (p && !g.dataset.dy) return p[1] + pt(g.dataset.loc).y;
+  }
+  return svg.viewBox.baseVal.height;
+}
+/** SVG point (y down) to a `location` (sheet mm, y up). */
+const toLocation = (x, y) => [round2(x), round2(sheetHeight() - y)];
+/** A view name not used yet in the drawing. */
+function freeViewName(spec, want) {
+  const used = new Set();
+  const walk = l => (l || []).forEach(v => { if (v && v.name) used.add(v.name); walk(v && v.projected); walk(v && v.sections); walk(v && v.details); });
+  walk(spec.views);
+  if (svg) svg.querySelectorAll(":scope > g.view").forEach(g => used.add(g.id));
+  if (!used.has(want)) return want;
+  for (let k = 2; ; k++) if (!used.has(`${want}_${k}`)) return `${want}_${k}`;
+}
+/** Projected view `ptr` (group `v`) as a base view of its own, where it is now. */
+async function toBaseView(v, ptr) {
+  if (busy) return;
+  if (!v.dataset.model) { setStatus("Re-render with the new stepdraw to convert views", true); return; }
+  let spec;
+  try { spec = JSON.parse(specText); } catch (e) { setStatus("The drawing JSON could not be read", true); return; }
+  const val = getPtr(spec, ptr);
+  if (!val) { setStatus("This view is not in the drawing JSON any more; re-render first", true); return; }
+  // its axes as drawn: right, up and (towards the viewer) right x up
+  const [r, u, , sc] = v.dataset.model.split(";").map(t => t.split(",").map(Number));
+  const d = vcross(r, u);
+  const p = sheetPos(v);
+  const nv = { name: val.name || v.id, direction: tidy(d), up: tidy(u), scale: sc[0] || 1 };
+  if (p) nv.location = toLocation(p[0], p[1]);
+  for (const [k, x] of Object.entries(val)) if (!["position", "distance", "name"].includes(k)) nv[k] = x;
+  const i = (spec.views || []).length;
+  let next;
+  try { next = appendSpec(removeSpec(specText, ptr), "/views", nv); } catch (e) { setStatus("Could not convert the view: " + e.message, true); return; }
+  // its annotations go with it; the views after it in its old list move up one
+  const parts = ptr.split("/"), j = +parts.pop(), from = parts.join("/");
+  const remap = s => s && (s === ptr || s.startsWith(ptr + "/")) ? "/views/" + i + s.slice(ptr.length) : shiftPtr(s, from, j, -1);
+  await writeSpec(next, "base view", `${nv.name} is now a base view: drag it anywhere in Views mode`, remap);
+}
+/** Right-click on the sheet away from the views (Views mode): insert a base view there. */
+function openSheetMenu(x, y) {
+  if (!specText) return;
+  let spec;
+  try { spec = JSON.parse(specText); } catch (e) { setStatus("The drawing JSON could not be read", true); return; }
+  const p = screenToSvg(x, y);
+  const m = viewMenu = document.createElement("div");
+  m.id = "viewMenu";
+  m.innerHTML = `<div class="ttl">Insert base view</div><div class="row"><select title="Which side of the part the new view looks at"></select></div><div class="btns"><button class="go primary">Insert</button></div>`;
+  const sel = m.querySelector("select");
+  for (const [k, o] of Object.entries(ORIENTS)) sel.appendChild(new Option(o.label, k));
+  sel.value = "front";
+  const go = () => {
+    closeViewMenu();
+    const o = ORIENTS[sel.value];
+    const scale = ((spec.views || [])[0] || {}).scale || 1;
+    const nv = { name: freeViewName(spec, sel.value), direction: o.dir, up: o.up, scale, location: toLocation(p.x, p.y) };
+    let next;
+    try { next = appendSpec(specText, "/views", nv); } catch (e) { setStatus("Could not add the view: " + e.message, true); return; }
+    writeSpec(next, "new base view", `Added base view ${nv.name} (${o.label.toLowerCase()}); right-click it for projected views and its orientation`);
+  };
+  m.querySelector(".go").onclick = go;
+  sel.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); go(); } });
+  document.body.appendChild(m);
+  const rr = m.getBoundingClientRect();
+  m.style.left = Math.max(4, Math.min(x, innerWidth - rr.width - 4)) + "px";
+  m.style.top = Math.max(4, Math.min(y, innerHeight - rr.height - 4)) + "px";
+  sel.focus();
+}
+/** "2:1", "1:2" for a scale. */
+function scaleText(v) {
+  const r = x => Math.round(x * 1000) / 1000;
+  return v >= 1 ? `${r(v)}:1` : `1:${r(1 / v)}`;
+}
+async function setViewScale(ptr, v, done) {
+  let next;
+  try { next = putCompact(specText, ptr + "/scale", v); } catch (e) { setStatus("Could not change the scale: " + e.message, true); return; }
+  await writeSpec(next, "scale", done);
 }
 async function addProjected(ptr, position) {
   if (busy) return;
@@ -3153,6 +3364,9 @@ async function listDrawings() {
     const out = await res.json();
     for (const f of out.files) { const o = document.createElement("option"); o.value = o.textContent = f; sel.appendChild(o); }
     sel.disabled = false;
+    stepFiles = out.steps || [];
+    $("autoBtn").disabled = !stepFiles.length;
+    if (!stepFiles.length) $("autoBtn").title = "No STEP files in " + out.folder;
     sel.title = "Drawing JSON files in " + out.folder;
     if (!out.files.length) setStatus("No drawing JSON files in " + out.folder);
     // ?drawing=<path> opens that drawing straight away
@@ -3166,6 +3380,41 @@ async function listDrawings() {
 }
 listDrawings();
 
+// ------------------------------------------------------------ a first drawing for a STEP file
+let stepFiles = [];
+$("autoBtn").onclick = () => {
+  const sel = $("autoStep");
+  clear(sel);
+  // the STEP file of the drawing open now first
+  let cur = "";
+  try { const sf = specText && JSON.parse(specText).step_file; if (sf && source.path) cur = (source.path.split("/").slice(0, -1).concat(sf)).join("/"); } catch (e) { /* no drawing */ }
+  for (const f of stepFiles) { const o = document.createElement("option"); o.value = o.textContent = f; sel.appendChild(o); }
+  if (stepFiles.includes(cur)) sel.value = cur;
+  document.querySelector('input[name="autoMode"][value="base"]').checked = true;   // base view only unless chosen
+  $("autoDlg").showModal();
+};
+$("autoDlg").addEventListener("close", async () => {
+  if ($("autoDlg").returnValue !== "ok") return;
+  const step = $("autoStep").value;
+  if (!step) return;
+  const mode = (document.querySelector('input[name="autoMode"]:checked') || {}).value || "auto";
+  if (dirty() && !confirm("The drawing JSON has unsaved edits. Open the new drawing and lose them?")) return;
+  setStatus((mode === "base" ? "Making a base view for " : "Making a drawing for ") + step + "…");
+  let out;
+  try { out = await postJson("/api/autodraw", { step, mode }); } catch (e) { setStatus("stepdraw is not reachable", true); return; }
+  if (out.error) { setStatus("Could not make the drawing: " + out.error, true); return; }
+  const sel = $("drawings");
+  if (![...sel.options].some(o => o.value === out.path)) {
+    const o = document.createElement("option"); o.value = o.textContent = out.path;
+    const after = [...sel.options].find(o => o.value && o.value > out.path);
+    sel.insertBefore(o, after || null);
+  }
+  sel.value = out.path;
+  deleted.length = 0;
+  await renderDrawing({ path: out.path }, false);
+  setStatus(`Wrote ${out.path}` + (out.notes && out.notes.length ? " (" + out.notes.join("; ") + ")" : "") + ". Edit it like any drawing; Save writes your changes.");
+});
+
 $("undo").onclick = undoAny;
 $("redo").onclick = redo;
 $("reset").onclick = () => selected && reset([selected]);
@@ -3174,7 +3423,7 @@ $("fit").onclick = fit;
 $("save").onclick = () => {
   const out = svg.cloneNode(true);
   out.classList.remove("drawing", "panning", "picking");
-  out.querySelectorAll(".pick, .handle, g.handles").forEach(g => g.remove());     // editor-only pick layer and handles
+  out.querySelectorAll(".pick, .handle, g.handles, .tbhit").forEach(g => g.remove());     // editor-only pick layer and handles
   if (!out.getAttribute("class")) out.removeAttribute("class");
   out.querySelectorAll(".sel").forEach(g => g.classList.remove("sel"));
   out.querySelectorAll('g[data-role="dimext"]:empty').forEach(g => g.remove());

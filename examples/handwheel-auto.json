@@ -1,0 +1,96 @@
+{
+  "step_file": "handwheel.step",
+  "title": {
+    "drawing_number": "HANDWHEEL",
+    "description": "HANDWHEEL",
+    "material": "",
+    "finish": "",
+    "notes": "REMOVE ALL BURRS AND SHARP EDGES.",
+    "revision": "A",
+    "drawn_by": "",
+    "date": "2026-11-16"
+  },
+  "views": [
+    {
+      "name": "top",
+      "direction": [0, 0, 1],
+      "up": [0, 1, 0],
+      "scale": 1.0,
+      "dimensions": [
+        {
+          "type": "diameter",
+          "of": "faces('>X[5]')"
+        },
+        {
+          "type": "diameter",
+          "of": "faces('>X')",
+          "text": "Ø<> THRU"
+        },
+        {
+          "type": "diameter",
+          "of": "faces('>X[3]')",
+          "text": "Ø<> THRU"
+        },
+        {
+          "type": "ordinate",
+          "origin": "faces('>X[5]')",
+          "targets": [
+            "faces('>X')"
+          ],
+          "direction": "x",
+          "side": "below"
+        },
+        {
+          "type": "ordinate",
+          "origin": "faces('>X[5]')",
+          "targets": [
+            "faces('>X')"
+          ],
+          "direction": "y",
+          "side": "left"
+        }
+      ],
+      "projected": [
+        {
+          "position": "bottom",
+          "dimensions": [
+            {
+              "type": "linear",
+              "from": "faces('%PLANE').faces('<Z')",
+              "to": "faces('%PLANE').faces('>Z')",
+              "direction": "vertical",
+              "side": "left"
+            },
+            {
+              "type": "diameter",
+              "of": "faces('<Y')",
+              "text": "Ø<> THRU"
+            },
+            {
+              "type": "ordinate",
+              "origin": "faces('>X[5]')",
+              "targets": [
+                "faces('<Y')"
+              ],
+              "direction": "x",
+              "side": "below"
+            },
+            {
+              "type": "ordinate",
+              "origin": "faces('%PLANE').faces('<Z')",
+              "targets": [
+                "faces('<Y')"
+              ],
+              "direction": "y",
+              "side": "left"
+            },
+            {
+              "type": "diameter",
+              "of": "faces('>X[4]')"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

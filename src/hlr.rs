@@ -290,20 +290,56 @@ fn silhouettes(m: &Model, d: V3) -> Vec<(usize, Vec<V3>)> {
                 }
                 continue;
             }
+            SurfKind::BSpline(ref b) => {
+                for c in f.bspline_contour(&|u, v| b.normal(u, v).map_or(1.0, |n| n.dot(d))) {
+                    out.push((fi, c));
+                }
+                continue;
+            }
             _ => continue,
         };
         for (u, g) in lines {
             let n = 64;
+            let inside = |i: usize, v: f64| f.contains_uv(v2(u, v)) || f.contains_uv(v2(u, v + (v1 - v0) * 1e-4)) && i == 0 || f.contains_uv(v2(u, v - (v1 - v0) * 1e-4)) && i == n;
+            // where the line leaves the face between v = a (inside or not) and v = c
+            let edge = |a: f64, c: f64| {
+                let a_in = f.contains_uv(v2(u, a));
+                let (mut lo, mut hi) = (a, c);
+                for _ in 0..40 {
+                    let mid = 0.5 * (lo + hi);
+                    if f.contains_uv(v2(u, mid)) == a_in {
+                        lo = mid;
+                    } else {
+                        hi = mid;
+                    }
+                }
+                if a_in { lo } else { hi }
+            };
             let mut cur: Vec<V3> = Vec::new();
+            let mut prev: Option<(f64, bool)> = None;
             for i in 0..=n {
                 let v = v0 + (v1 - v0) * i as f64 / n as f64;
-                if f.contains_uv(v2(u, v)) || f.contains_uv(v2(u, v + (v1 - v0) * 1e-4)) && i == 0 || f.contains_uv(v2(u, v - (v1 - v0) * 1e-4)) && i == n {
+                let ins = inside(i, v);
+                if ins {
+                    if let Some((pv, false)) = prev
+                        && cur.is_empty()
+                    {
+                        cur.push(g(edge(pv, v)));
+                    }
                     cur.push(g(v));
-                } else if cur.len() > 1 {
-                    out.push((fi, std::mem::take(&mut cur)));
                 } else {
-                    cur.clear();
+                    if let Some((pv, true)) = prev
+                        && !cur.is_empty()
+                    {
+                        cur.push(g(edge(pv, v)));
+                    }
+                    if cur.len() > 1 {
+                        out.push((fi, std::mem::take(&mut cur)));
+                    } else {
+                        cur.clear();
+                    }
                 }
+                prev = Some((v, ins));
             }
             if cur.len() > 1 {
                 out.push((fi, cur));
@@ -368,16 +404,54 @@ fn torus_silhouette(f: &crate::brep::Face, big: f64, r: f64, dx: f64, dy: f64, d
     let phi = dy.atan2(dx);
     let n = 48;
     for sign in [1.0, -1.0] {
-        let mut cur = Vec::new();
-        for i in 0..=n {
-            let w = w0 + span * i as f64 / n as f64;
+        // the silhouette point at tube angle w, if on the face
+        let point = |w: f64| -> Option<(f64, f64)> {
             let c = -da * w.tan() / m;
             if w.cos().abs() < 1e-12 || c.abs() > 1.0 {
-                flush(&mut cur);
-                continue;
+                return None;
             }
             let u = phi + sign * c.acos();
-            if inside(u, w) { cur.push(at(u, w)) } else { flush(&mut cur) }
+            inside(u, w).then_some((u, w))
+        };
+        // where it leaves the face between tube angles a (on it or not) and b
+        let edge = |a: f64, b: f64| {
+            let a_in = point(a).is_some();
+            let (mut lo, mut hi) = (a, b);
+            for _ in 0..40 {
+                let mid = 0.5 * (lo + hi);
+                if point(mid).is_some() == a_in {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            point(if a_in { lo } else { hi })
+        };
+        let mut cur = Vec::new();
+        let mut prev: Option<(f64, bool)> = None;
+        for i in 0..=n {
+            let w = w0 + span * i as f64 / n as f64;
+            match point(w) {
+                Some((u, w)) => {
+                    if let Some((pw, false)) = prev
+                        && cur.is_empty()
+                        && let Some((eu, ew)) = edge(pw, w)
+                    {
+                        cur.push(at(eu, ew));
+                    }
+                    cur.push(at(u, w));
+                    prev = Some((w, true));
+                }
+                None => {
+                    if let Some((pw, true)) = prev
+                        && let Some((eu, ew)) = edge(pw, w)
+                    {
+                        cur.push(at(eu, ew));
+                    }
+                    flush(&mut cur);
+                    prev = Some((w, false));
+                }
+            }
         }
         flush(&mut cur);
     }
@@ -451,11 +525,29 @@ fn remove_covered(lines: Vec<Vec<V2>>, grid: &SegGrid, tol: f64, min_len: f64) -
                 i += 1;
             }
         }
+        // where the line goes under another, between samples a (free) and b
+        let under = |a: V2, b: V2| {
+            let (mut lo, mut hi) = (a, b);
+            for _ in 0..20 {
+                let mid = lo.lerp(hi, 0.5);
+                if grid.near(mid, tol) {
+                    hi = mid;
+                } else {
+                    lo = mid;
+                }
+            }
+            lo.lerp(hi, 0.5)
+        };
         let mut cur = Vec::new();
-        for (p, c) in s.iter().zip(&cov) {
-            if !c {
-                cur.push(*p);
+        for i in 0..s.len() {
+            if !cov[i] {
+                // the free part runs right up to the line covering the rest
+                if cur.is_empty() && i > 0 {
+                    cur.push(under(s[i], s[i - 1]));
+                }
+                cur.push(s[i]);
             } else if !cur.is_empty() {
+                cur.push(under(s[i - 1], s[i]));
                 if cur.len() > 1 {
                     out.push(std::mem::take(&mut cur));
                 } else {
@@ -477,7 +569,19 @@ pub fn compute(m: &Model, pr: &Projector, hidden: bool, centre: bool, tangent: T
     // seam edges (both sides on the same periodic face) are not real edges;
     // smooth (tangent) edges, such as the ends of a fillet, are drawn as
     // `tangent` says (not, as thin witness lines, or as ordinary edges)
-    let smooth: Vec<bool> = (0..m.edges.len()).map(|i| tangent != TangentEdges::Visible && m.smooth_edge(i)).collect();
+    // A smooth edge where its face is seen edge-on (the flat face beside a
+    // fillet, looked at along the face) lies on the outline: an ordinary edge.
+    let edge_on = |i: usize| {
+        let e = &m.edges[i];
+        let n = e.pts.len().saturating_sub(1);
+        e.faces.iter().any(|&f| {
+            [n / 4, n / 2, 3 * n / 4].iter().all(|&k| m.faces[f].surf.normal_at(e.pts[k]).is_some_and(|nn| nn.dot(pr.d).abs() < 1e-3))
+        })
+    };
+    let tan_edge: Vec<bool> = (0..m.edges.len()).map(|i| tangent != TangentEdges::Visible && m.smooth_edge(i)).collect();
+    // drawn as outline only where no other line already is (see below)
+    let outline_tan: Vec<bool> = (0..m.edges.len()).map(|i| tan_edge[i] && edge_on(i)).collect();
+    let smooth: Vec<bool> = (0..m.edges.len()).map(|i| tan_edge[i] && !outline_tan[i]).collect();
     let mut curves: Vec<Vec<V3>> = m
         .edges
         .iter()
@@ -504,6 +608,7 @@ pub fn compute(m: &Model, pr: &Projector, hidden: bool, centre: bool, tangent: T
     let mut vis2: Vec<Vec<V2>> = Vec::new();
     let mut sil_vis: Vec<Vec<V2>> = Vec::new();
     let mut hid2: Vec<Vec<V2>> = Vec::new();
+    let mut out_tan: Vec<Vec<V2>> = Vec::new();
     for (ci, c) in curves.iter().enumerate() {
         if c.len() < 2 {
             continue;
@@ -522,13 +627,17 @@ pub fn compute(m: &Model, pr: &Projector, hidden: bool, centre: bool, tangent: T
         } else {
             None
         };
-        let snap = |p: V3| match &conic {
-            Some((fr, a, b)) => {
+        // silhouettes: points back on their surface (a chord of a curved
+        // outline cuts into the material)
+        let sil_surf = (ci >= n_edges).then(|| &m.faces[sil_face[ci - n_edges]].surf);
+        let snap = |p: V3| match (&conic, sil_surf) {
+            (Some((fr, a, b)), _) => {
                 let q = fr.local(p);
                 let t = (q.y / b).atan2(q.x / a);
                 if q.x.abs() + q.y.abs() > 1e-12 { fr.o + fr.x * (a * t.cos()) + fr.y * (b * t.sin()) } else { p }
             }
-            None => p,
+            (None, Some(sf)) => sf.onto_silhouette(p, pr.d),
+            _ => p,
         };
         let faces: &[usize] = if ci < n_edges { &m.edges[ci].faces } else { std::slice::from_ref(&sil_face[ci - n_edges]) };
         for (run, v) in classify(m, c, faces, pr.d, step, eps, cf.as_ref(), &snap) {
@@ -543,6 +652,10 @@ pub fn compute(m: &Model, pr: &Projector, hidden: bool, centre: bool, tangent: T
                     tan_vis.push(p2)
                 }
                 2 if ci < n_edges && smooth[ci] => {}
+                1 if ci < n_edges && outline_tan[ci] => {
+                    edge_runs.push((ci, p2.clone()));
+                    out_tan.push(p2)
+                }
                 1 if ci < n_edges => {
                     edge_runs.push((ci, p2.clone()));
                     vis2.push(p2)
@@ -584,6 +697,18 @@ pub fn compute(m: &Model, pr: &Projector, hidden: bool, centre: bool, tangent: T
         }
     }
     vis2.extend(sil_vis);
+    // tangent edges on the outline: where no other line is drawn
+    let out_tan = remove_covered(out_tan, &grid, 0.05, 0.6);
+    for l in &out_tan {
+        for w in l.windows(2) {
+            grid.insert(w[0], w[1]);
+        }
+    }
+    vis2.extend(out_tan);
+    // A line stopping just short of another (where it goes behind an
+    // outline, or meets a fillet's outline) is taken on to it: the
+    // visibility test has a little play next to edges.
+    close_gaps(&mut vis2, &tan_vis, 0.3);
     // witness lines coinciding with outlines (e.g. a fillet's end seen end-on) are dropped
     let tangent = remove_covered(tan_vis, &grid, 0.05, 0.6);
     let hid2 = remove_covered(hid2, &grid, 0.08, 0.6);
@@ -601,6 +726,70 @@ pub fn compute(m: &Model, pr: &Projector, hidden: bool, centre: bool, tangent: T
     }
     let center = if centre { centre_lines(m, pr, clip.as_ref(), eps) } else { vec![] };
     ViewLines { visible: vis2, hidden: hid_out, center, cut, edge_runs, sil_runs, hidden_runs, tangent }
+}
+
+/// Extend an end of a line that doesn't touch another line to the nearest
+/// other line (visible or tangent) within `reach` (sheet mm).
+fn close_gaps(lines: &mut [Vec<V2>], also: &[Vec<V2>], reach: f64) {
+    // segments by cell, with the line they belong to
+    let cell = 2.0;
+    let key = |p: V2| ((p.x / cell).floor() as i64, (p.y / cell).floor() as i64);
+    let mut grid: HashMap<(i64, i64), Vec<(V2, V2, usize)>> = HashMap::new();
+    for (k, l) in lines.iter().chain(also.iter()).enumerate() {
+        for w in l.windows(2) {
+            let bb = BBox2::new(w[0], w[1]);
+            let (k0, k1) = (key(bb.min), key(bb.max));
+            for i in k0.0..=k1.0 {
+                for j in k0.1..=k1.1 {
+                    grid.entry((i, j)).or_default().push((w[0], w[1], k));
+                }
+            }
+        }
+    }
+    // the nearest point of another line within reach: (distance, point)
+    let nearest = |p: V2, own: usize| -> Option<(f64, V2)> {
+        let c = key(p);
+        let r = (reach / cell).ceil() as i64 + 1;
+        let mut best: Option<(f64, V2)> = None;
+        for i in c.0 - r..=c.0 + r {
+            for j in c.1 - r..=c.1 + r {
+                for (a, b, o) in grid.get(&(i, j)).into_iter().flatten() {
+                    if *o == own {
+                        continue;
+                    }
+                    let ab = *b - *a;
+                    let l2 = ab.dot(ab);
+                    let t = if l2 < 1e-18 { 0.0 } else { ((p - *a).dot(ab) / l2).clamp(0.0, 1.0) };
+                    let q = *a + ab * t;
+                    let dd = q.dist(p);
+                    if dd <= reach && best.is_none_or(|b| dd < b.0) {
+                        best = Some((dd, q));
+                    }
+                }
+            }
+        }
+        best
+    };
+    let mut fixes: Vec<(usize, bool, V2)> = Vec::new();
+    for (k, l) in lines.iter().enumerate() {
+        if l.len() < 2 || l[0].dist(*l.last().unwrap()) < 1e-6 {
+            continue;
+        }
+        for (start, p) in [(true, l[0]), (false, *l.last().unwrap())] {
+            if let Some((dd, q)) = nearest(p, k)
+                && dd > 0.02
+            {
+                fixes.push((k, start, q));
+            }
+        }
+    }
+    for (k, start, q) in fixes {
+        if start {
+            lines[k].insert(0, q);
+        } else {
+            lines[k].push(q);
+        }
+    }
 }
 
 fn centre_lines(m: &Model, pr: &Projector, clip: Option<&Clip>, eps: f64) -> Vec<(V2, V2)> {
