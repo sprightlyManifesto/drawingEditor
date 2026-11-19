@@ -252,10 +252,7 @@
   <span class="sep"></span>
   <button id="undo" disabled title="Undo a move or a deletion (Ctrl+Z)">Undo</button>
   <button id="redo" disabled title="Redo (Ctrl+Shift+Z)">Redo</button>
-  <button id="reset" disabled title="Put the selected item back where stepdraw placed it">Reset selected</button>
-  <button id="resetAll" disabled>Reset all</button>
   <span class="sep"></span>
-  <button id="fit" disabled title="Fit sheet (F)">Fit</button>
   <button id="save" class="primary" disabled>Download SVG</button>
   <button id="helpBtn" title="The drawing JSON reference, with examples (F1)">Help</button>
   <span id="name"></span>
@@ -297,6 +294,7 @@
       </div>
     </div>
     <span id="annMembers" hidden></span>
+    <select id="annMove" hidden title="Move this item (with anything merged onto its leader) to another view; its selectors work in any view"></select>
     <button id="annRef" hidden title="Attach this item to another feature: pick it in the drawing (Geometry mode)">Change reference…</button>
     <button id="annRD" hidden></button>
     <button id="annMerge" hidden title="Merge another dimension, thread, GD&T frame or note on the same feature onto this one's leader">Merge with…</button>
@@ -660,7 +658,7 @@ function load(text, name, keep) {
   anns.forEach(render);
   svg.classList.toggle("picking", $("mode").value === "geom");
   showPicks();
-  for (const id of ["fit", "save", "resetAll"]) $(id).disabled = false;
+  $("save").disabled = false;
   refreshButtons();
   return kept;
 }
@@ -724,7 +722,6 @@ function hover(hl) {
 function refreshButtons() {
   $("undo").disabled = !undoStack.length && !deleted.length;
   $("redo").disabled = !redoStack.length;
-  $("reset").disabled = !selected || isCut(selected);
 }
 const same = (a, b) => Object.keys(a).every(k => Math.abs(a[k] - b[k]) < 1e-6);
 function commit(changes) {            // changes: [{g, before, after}]
@@ -1837,8 +1834,8 @@ function schemaFor(kind, spec) {
         type: { enum: ["linear", "diameter", "radius", "angle", "ordinate"], description: "Kind of dimension." },
         from: sel("linear / angle: first feature."), to: sel("linear / angle: second feature."),
         flipArrows: { type: "boolean", default: false, description: "linear (and diameter / radius seen side-on): arrows the other way round: outside the extension lines pointing in where they would be inside, inside pointing out where they would be outside." },
-        fromPoint: { enum: ["center", "max", "min"], default: "center", description: "linear, when \"from\" is a circle, arc or cylinder: measure from its centre (default), its far side (max: the largest distance) or its near side (min: the smallest)." },
-        toPoint: { enum: ["center", "max", "min"], default: "center", description: "linear, when \"to\" is a circle, arc or cylinder: measure to its centre (default), its far side (max: the largest distance) or its near side (min: the smallest)." },
+        fromPoint: { enum: ["center", "max", "min"], default: "center", description: "linear: where the dimension meets \"from\": its reference point (center, default), or its point giving the largest (max) or smallest (min) distance: a circle's edge, an edge's end, a face's corner." },
+        toPoint: { enum: ["center", "max", "min"], default: "center", description: "linear: where the dimension meets \"to\": its reference point (center, default), or its point giving the largest (max) or smallest (min) distance: a circle's edge, an edge's end, a face's corner." },
         of: sel("diameter / radius: a circle or arc edge, or a cylindrical face. Either type works on any of them (switch with → Radius / → Diameter)."),
         origin: ordRef("ordinate: the zero point."),
         targets: { type: "array", items: ordRef("ordinate: a feature to dimension."), description: "ordinate: features to dimension; each a selector, or { \"of\": selector, \"gap\": mm } to set where its leader starts." },
@@ -2794,7 +2791,52 @@ function refFields(val) {
   (Array.isArray(val.intersect) ? val.intersect : []).forEach((t, i) => { if (typeof t === "string") out.push(["intersect/" + i, "line " + (i + 1)]); });
   return out;
 }
+// ------------------------------------------------------------ moving an annotation to another view
+const MOVABLE_KINDS = ["dimensions", "gdt", "datums", "datum_targets", "notes", "threads"];
+/** The "Move to view…" list: the drawing's other views. */
+function refreshMoveList() {
+  const sel = $("annMove");
+  sel.hidden = true;
+  if (!editing || editing.arr || !MOVABLE_KINDS.includes(editing.kind) || !svg) return;
+  const here = ptrBase(editing.ptr);
+  const views = [...svg.querySelectorAll(":scope > g.view")].filter(g => g.dataset.src && g.dataset.src !== here);
+  if (!views.length) return;
+  clear(sel);
+  const first = sel.appendChild(new Option("Move to view…", ""));
+  first.disabled = true;
+  for (const g of views) sel.appendChild(new Option(g.id, g.dataset.src));
+  sel.value = "";
+  sel.hidden = false;
+}
+$("annMove").addEventListener("change", async () => {
+  const to = $("annMove").value;
+  if (!editing || !to) return;
+  const ptr = editing.ptr;
+  if (editorText() !== editing.text0) {
+    try { JSON.parse(autoFixCommas(true)); } catch (e) { annMsg("Fix the JSON first: " + e.message, true); $("annMove").value = ""; return; }
+    await applyAnnEdit();
+  } else closeAnnEditor();
+  moveToView(headOf(ptr), to);
+});
+/** Move item `ptr` and the items merged onto its leader to view `to` (a view's JSON path). */
+async function moveToView(ptr, to) {
+  let spec;
+  try { spec = JSON.parse(specText); } catch (e) { setStatus("The drawing JSON could not be read", true); return; }
+  const items = [ptr, ...membersOf(ptr)].filter(p => getPtr(spec, p) !== undefined);
+  if (!items.length) { setStatus("This item is not in the drawing JSON any more; re-render first", true); return; }
+  const toName = (svg.querySelector(`:scope > g.view[data-src="${CSS.escape(to)}"]`) || {}).id || to;
+  let text = specText;
+  try {
+    // taken out last-first, so the earlier paths in a list stay right; put in, in order
+    const vals = items.map(p => [p, getPtr(spec, p)]);
+    for (const p of [...items].sort((a, b) => ptrBase(a) === ptrBase(b) ? +b.split("/").pop() - +a.split("/").pop() : 0)) text = removeSpec(text, p);
+    for (const [p, v] of vals) text = appendSpec(text, to + "/" + ptrKind(p), v);
+  } catch (e) { setStatus("Could not move it: " + e.message, true); return; }
+  select(null);
+  await writeSpec(text, "move to view", `Moved ${entryName(ptr, getPtr(spec, ptr))}${items.length > 1 ? ` (with ${items.length - 1} merged)` : ""} to view '${toName}'`);
+}
 function refreshRefButton(val) {
+  refreshMoveList();
   const b = $("annRef");
   b.hidden = true;
   if (!editing || editing.arr || editing.kind === "title" || ["views", "projected", "sections", "details"].includes(editing.kind)) return;
@@ -3778,9 +3820,6 @@ $("autoDlg").addEventListener("close", async () => {
 
 $("undo").onclick = undoAny;
 $("redo").onclick = redo;
-$("reset").onclick = () => selected && reset([selected]);
-$("resetAll").onclick = () => svg && reset([...svg.querySelectorAll("g.ann, :scope > g.view")]);
-$("fit").onclick = fit;
 $("save").onclick = () => {
   const out = svg.cloneNode(true);
   out.classList.remove("drawing", "panning", "picking");

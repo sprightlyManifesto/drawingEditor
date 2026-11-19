@@ -294,7 +294,7 @@ Fields for all dimension types:
 | `type` | string | *required* | One of the types above. |
 | `from`, `to` | selector | | `linear` and `angle`: the two features. |
 | `flipArrows` | true / false | false | `linear`, and `diameter` / `radius` seen side-on: the arrows the other way round. Where they would sit inside the extension lines they go outside, pointing in, and where they would be outside (a short dimension) they go inside, pointing out. The text stays where it was. |
-| `fromPoint`, `toPoint` | `"center"` / `"max"` / `"min"` | `"center"` | `linear`, when `from` / `to` is a circle, arc or cylinder: measure to its centre, to its far side (`max`: the largest distance the dimension can be) or to its near side (`min`: the smallest). |
+| `fromPoint`, `toPoint` | `"center"` / `"max"` / `"min"` | `"center"` | `linear`: where the dimension meets the `from` / `to` feature. `center`: its reference point (a circle's centre, an edge's midpoint, a face's centre). `max`: its point that makes the dimension largest; `min`: the one that makes it smallest. On a circle, arc or cylinder that is its edge across the measuring direction; on any other feature its extreme point along it (an end of an edge, a corner of a face). |
 | `of` | selector | | `diameter` and `radius`: the feature: a circle or arc edge, a cylindrical face, or a fillet (torus) face where it shows in profile. Either type works on any of these, so a radius can be shown as a diameter and the other way round (in the editor, **→ Radius** / **→ Diameter** in the dimension's JSON window, which also swaps `R<>` / `Ø<>` in `text`). |
 | `origin`, `targets` | selector, list of selectors | | `ordinate`: the zero and the features measured from it. Each can instead be `{ "of": selector, "gap": mm }`, where `gap` sets how far from that feature its leader starts (sheet mm; default `ext_gap` in config.json, 1). In the editor, drag the handle on the end of a label's leader to set it. |
 | `direction` | string | the larger offset | `linear`: `horizontal`, `vertical` or `aligned`. `ordinate`: `x` or `y`. |
@@ -309,7 +309,7 @@ Fields for all dimension types:
 
 Linear dimensions are stacked for you: shorter ones nearest the view, and a dimension moves out a level when it would overlap another. Ordinate labels are spread apart with jogged leaders. Diameter and radius leaders go in the nearest free space.
 
-What a feature contributes to a measurement: a vertex gives its point, a straight edge its midpoint, a circle or arc its centre, a flat face its centre, and a cylinder a point on its axis. A circle, arc or cylinder can give its edge instead: `fromPoint` / `toPoint` `"max"` measures to the side that makes the dimension largest, `"min"` to the side that makes it smallest.
+What a feature contributes to a measurement: a vertex gives its point, a straight edge its midpoint, a circle or arc its centre, a flat face its centre, and a cylinder a point on its axis. Any feature can instead give the point that makes the dimension largest (`fromPoint` / `toPoint` `"max"`) or smallest (`"min"`): a circle's edge, an edge's end, a face's corner.
 
 ```json
 "dimensions": [

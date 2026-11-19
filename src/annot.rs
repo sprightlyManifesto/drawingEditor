@@ -1193,6 +1193,68 @@ impl<'a> Annotator<'a> {
                 }
             }
         }
+        self.failed_items(ann, &gdts, base);
+    }
+
+    /// Items that drew nothing (a selector that picks nothing, a feature the
+    /// item can't use) shown in red in the middle of the view, with the reason,
+    /// so they can be found and fixed (right-click) or deleted.
+    fn failed_items(&mut self, spec: &Annotations, gdts: &[GdtSpec], base: &str) {
+        // what was drawn: each group's item and the items merged onto it
+        let mut drawn: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for p in self.dims.iter().chain(self.gdt.iter()) {
+            if let Prim::Group { attrs, .. } = p {
+                for (k, v) in attrs {
+                    if *k == "data-src" {
+                        drawn.insert(v.clone());
+                    } else if *k == "data-members" {
+                        drawn.extend(v.split(' ').map(String::from));
+                    }
+                }
+            }
+        }
+        // (JSON path, what it is, its selectors); frames and datums placed on a
+        // dimension or frame are drawn with it
+        let mut items: Vec<(String, String, Vec<String>)> = Vec::new();
+        let some = |v: &[&Option<String>]| v.iter().filter_map(|s| s.as_ref().filter(|s| !s.is_empty()).cloned()).collect::<Vec<_>>();
+        for (i, d) in spec.dimensions.iter().enumerate() {
+            let mut sels = some(&[&d.from, &d.to, &d.of]);
+            sels.extend(d.origin.iter().map(|o| o.of.clone()));
+            sels.extend(d.targets.iter().map(|t| t.of.clone()));
+            items.push((format!("{}/dimensions/{}", base, i), format!("{} dimension {}", d.kind, i + 1), sels));
+        }
+        for (i, g) in gdts.iter().enumerate().filter(|(_, g)| g.dimension.is_none()) {
+            items.push((format!("{}/gdt/{}", base, i), format!("GD&T frame {}", i + 1), vec![g.attach.clone()]));
+        }
+        for (i, t) in spec.datums.iter().enumerate().filter(|(_, t)| t.dimension.is_none() && t.gdt.is_none()) {
+            items.push((format!("{}/datums/{}", base, i), format!("datum {}", t.label), vec![t.attach.clone()]));
+        }
+        for (i, t) in spec.datum_targets.iter().enumerate() {
+            items.push((format!("{}/datum_targets/{}", base, i), format!("datum target {}", i + 1), vec![t.attach.clone()]));
+        }
+        for (i, n) in spec.notes.iter().enumerate() {
+            items.push((format!("{}/notes/{}", base, i), format!("note {}", i + 1), some(&[&n.attach])));
+        }
+        for (i, t) in spec.threads.iter().enumerate() {
+            items.push((format!("{}/threads/{}", base, i), format!("thread {}", i + 1), vec![t.of.clone()]));
+        }
+        let h = self.h();
+        let c = self.geom.center();
+        let mut k = 0;
+        for (src, what, sels) in items {
+            // the reason: a warning naming one of its selectors (drawn or not:
+            // a note whose feature isn't found is still placed, free)
+            let named = self.warnings.iter().find(|w| sels.iter().any(|s| w.contains(s.as_str()))).cloned();
+            if drawn.contains(&src) && named.is_none() {
+                continue;
+            }
+            let why = named.unwrap_or_else(|| "not drawn (see the warnings)".into());
+            let why = if why.chars().count() > 90 { why.chars().take(88).collect::<String>() + "…" } else { why };
+            let p = v2(c.x, c.y - k as f64 * 2.6 * h);
+            let text = Prim::Text { p, h, anchor: Anchor::Middle, rot: 0.0, s: format!("⚠ {}: {}", what, why), cls: "failed" };
+            self.dims.push(ann("failed", vec![("data-src", src.clone())], vec![], vec![role("static", vec![text])]));
+            k += 1;
+        }
     }
 
     /// Key of the feature a selector picks: holes / shafts by their axis
@@ -1269,16 +1331,14 @@ impl<'a> Annotator<'a> {
     }
 
     /// References at one end of a linear dimension, and the circle there when
-    /// the dimension goes to its edge (`mode` max / min) rather than its centre.
+    /// the dimension goes to its edge (`mode` max / min) rather than its centre
+    /// (other features go to their extreme point; see `prep_linear`).
     fn lin_end(&mut self, sel: &Option<String>, what: &str, mode: f64) -> Option<(Vec<RefGeo>, Option<Circ>)> {
         if mode == 0.0 {
             return Some((self.refs(sel, what)?, None));
         }
         let refs = self.circ_refs(sel)?;
         let c = refs.iter().find_map(|r| r.circ.clone());
-        if c.is_none() {
-            self.warnings.push(format!("{}Point: {:?} is not a circle, arc or cylinder; measured to it as it is", what, sel));
-        }
         Some((refs, c))
     }
 
@@ -1288,24 +1348,44 @@ impl<'a> Annotator<'a> {
         // a circle end: its centre moved across to its far (max) or near (min)
         // side along the measuring direction `ax3`; returns the two 3D measure
         // points and the offset of each from its centre
+        // any other feature: its point furthest along (max) or back along
+        // (min) the measuring direction - an end of an edge, a corner of a face
         let ends = |ax3: V3| -> (V3, V3, V3, V3) {
             let (a0, b0) = (avg(&ra), avg(&rb));
             let s = if (b0 - a0).dot(ax3) < 0.0 { -1.0 } else { 1.0 };
-            let off = |c: &Option<Circ>, k: f64| -> V3 {
-                let Some(c) = c else { return V3::default() };
-                let w = ax3 - c.axis * c.axis.dot(ax3);
-                if w.len() < 1e-9 { V3::default() } else { w.norm() * (c.r * k) }
+            let off = |refs: &[RefGeo], c: &Option<Circ>, k: f64, p0: V3| -> V3 {
+                if k == 0.0 {
+                    return V3::default();
+                }
+                if let Some(c) = c {
+                    let w = ax3 - c.axis * c.axis.dot(ax3);
+                    return if w.len() < 1e-9 { V3::default() } else { w.norm() * (c.r * k) };
+                }
+                let pts = refs.iter().flat_map(|r| r.ext.iter().copied().chain(std::iter::once(r.rep)));
+                let far = if k > 0.0 { pts.max_by(|p, q| p.dot(ax3).total_cmp(&q.dot(ax3))) } else { pts.min_by(|p, q| p.dot(ax3).total_cmp(&q.dot(ax3))) };
+                far.map_or(V3::default(), |q| q - p0)
             };
-            let (oa, ob) = (off(&ca, -s * ma), off(&cb, s * mb));
+            let (oa, ob) = (off(&ra, &ca, -s * ma, a0), off(&rb, &cb, s * mb, b0));
             (a0 + oa, b0 + ob, oa, ob)
         };
         // the extension line start on a circle end: on its edge, at the end of
         // a cylinder nearest the dimension, level with the measure point
-        let circ_start = |c: &Option<Circ>, o: V3, m3: V3, axis: V2, toward: V2| -> Option<V2> {
-            let c = c.as_ref()?;
+        let circ_start = |refs: &[RefGeo], c: &Option<Circ>, o: V3, m3: V3, axis: V2, toward: V2| -> Option<V2> {
             if o.len() < 1e-12 {
                 return None;
             }
+            let Some(c) = c.as_ref() else {
+                // the extreme point: of the feature's points level with it, the one nearest the dimension
+                let mc = self.pr.p(m3).dot(axis);
+                let q = refs
+                    .iter()
+                    .flat_map(|r| r.ext.iter())
+                    .map(|p| self.pr.p(*p))
+                    .filter(|q| (q.dot(axis) - mc).abs() < 0.05)
+                    .max_by(|p, q| p.dot(toward).total_cmp(&q.dot(toward)))
+                    .unwrap_or_else(|| self.pr.p(m3));
+                return Some(q + axis * (mc - q.dot(axis)));
+            };
             let q = [c.v_range.0, c.v_range.1]
                 .iter()
                 .map(|v| self.pr.p(c.c + c.axis * *v + o))
@@ -1361,8 +1441,8 @@ impl<'a> Annotator<'a> {
         let (axis, toward) = if horiz { (v2(1.0, 0.0), v2(0.0, side.sign())) } else { (v2(0.0, 1.0), v2(side.sign(), 0.0)) };
         let ax3 = if horiz { self.pr.r } else { self.pr.u };
         let (a3, b3, oa, ob) = ends(ax3);
-        let a = circ_start(&ca, oa, a3, axis, toward).unwrap_or_else(|| self.ref_point(&ra, axis, toward));
-        let b = circ_start(&cb, ob, b3, axis, toward).unwrap_or_else(|| self.ref_point(&rb, axis, toward));
+        let a = circ_start(&ra, &ca, oa, a3, axis, toward).unwrap_or_else(|| self.ref_point(&ra, axis, toward));
+        let b = circ_start(&rb, &cb, ob, b3, axis, toward).unwrap_or_else(|| self.ref_point(&rb, axis, toward));
         let value = (b3 - a3).dot(ax3).abs();
         let dt = self.make_text(d, value, "", false);
         let w = self.text_w(&dt);
@@ -1374,7 +1454,7 @@ impl<'a> Annotator<'a> {
     fn prep_diameter_side(&mut self, d: &DimSpec, lins: &mut Vec<Lin>) -> bool {
         let Some(refs) = self.circ_refs(&d.of) else { return true };
         let Some(c) = refs.iter().find_map(|r| r.circ.clone()) else {
-            self.warnings.push(format!("{:?}: diameter/radius needs a circle or arc edge, a cylindrical face, or a fillet (torus) face seen in profile", d.of));
+            self.warnings.push(format!("{}: diameter/radius needs a circle or arc edge, a cylindrical face, or a fillet (torus) face seen in profile", d.of.as_deref().unwrap_or("(no \"of\")")));
             return true;
         };
         if c.axis.dot(self.pr.d).abs() > 0.5 {
@@ -1825,7 +1905,7 @@ impl<'a> Annotator<'a> {
                 self.obst.push(tb);
                 self.dims.extend(prims);
             }
-            None => self.warnings.push(format!("could not place {} dimension for {:?}", d.kind, d.of)),
+            None => self.warnings.push(format!("could not place {} dimension for {}", d.kind, d.of.as_deref().unwrap_or("(no of)"))),
         }
     }
 

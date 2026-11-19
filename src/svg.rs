@@ -234,6 +234,7 @@ pub fn style(cfg: &crate::config::Config) -> String {
   .title {{ font-weight: bold; }}
   .pick {{ display: none; }}
   .tbhit {{ fill: none; stroke: none; }}
+  .failed {{ fill: #e03131; font-weight: bold; stroke: #fff; stroke-width: 0.8; paint-order: stroke; stroke-linejoin: round; }}
   .construct {{ stroke-width: {thin}; stroke-dasharray: 2 1.2; stroke-linecap: butt; stroke: #555; }}
 </style>"#,
         vis = cfg.line_visible,
