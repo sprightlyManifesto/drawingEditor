@@ -29,10 +29,15 @@ impl Projector {
     }
 }
 
+#[derive(Clone)]
 pub struct ViewLines {
     pub visible: Vec<Vec<V2>>,
     pub hidden: Vec<Vec<V2>>,
-    pub center: Vec<(V2, V2)>,
+    /// Centre lines: (a, b, index into `center_src`).
+    pub center: Vec<(V2, V2, usize)>,
+    /// The feature each centre line belongs to: (faces?, ids) - the round
+    /// faces of an axis or centre mark, or the circle edge of a mark on no face.
+    pub center_src: Vec<(bool, Vec<usize>)>,
     /// Outline of the cut faces (section views only), for hatching.
     pub cut: Vec<Vec<V2>>,
     /// Visible runs of model edges (edge index) and of silhouettes (face
@@ -69,14 +74,16 @@ impl Clip {
 /// Whether the ray p + t d (t > 0) passes through some face: 0 = no, 1 = yes,
 /// 2 = it only touches face boundaries (an edge, or the outline of a face).
 fn ray_blocked(m: &Model, p: V3, d: V3, eps: f64, clip: Option<&Clip>) -> u8 {
+    crate::prof::count("  ray tests");
     let mut touch = 0;
     for f in &m.faces {
         if !f.bbox.expand(eps * 10.0).ray_hits(p, d) {
             continue;
         }
-        for t in f.surf.hits(p, d) {
+        let hits = if crate::prof::on() { crate::prof::time(&format!("  ray hits: {}", f.surf.type_name()), || f.surf.hits(p, d)) } else { f.surf.hits(p, d) };
+        for t in hits {
             let q = p + d * t;
-            if t > eps && !clip.is_some_and(|c| c.removed(q, eps)) && f.contains(q) {
+            if t > eps && !clip.is_some_and(|c| c.removed(q, eps)) && (if crate::prof::on() { crate::prof::time(&format!("  in-face test: {}", f.surf.type_name()), || f.contains(q)) } else { f.contains(q) }) {
                 if !f.near_boundary(q, eps * 100.0) {
                     return 1;
                 }
@@ -562,7 +569,37 @@ fn remove_covered(lines: Vec<Vec<V2>>, grid: &SegGrid, tol: f64, min_len: f64) -
     out.into_iter().map(|l| simplify(&l, 0.005)).filter(|l| poly_len(l) > 0.2).collect()
 }
 
+/// Hidden-line results by model and view, kept between renders (the editor
+/// re-renders the whole drawing after every change; mostly the same views).
+static CACHE: std::sync::Mutex<Option<HashMap<String, ViewLines>>> = std::sync::Mutex::new(None);
+
+/// The lines of a view (see `compute_lines`), from the cache when the same
+/// model has been drawn the same way before.
 pub fn compute(m: &Model, pr: &Projector, hidden: bool, centre: bool, tangent: TangentEdges, clip: Option<Clip>) -> ViewLines {
+    let key = format!(
+        "{:x}|{:?}|{:?}|{:?}|{:?}|{:?}|{}|{}|{:?}|{:?}",
+        m.key, pr.o, pr.r, pr.u, pr.d, pr.scale, hidden, centre, tangent, clip.map(|c| (c.c, c.d))
+    );
+    if m.key != 0
+        && let Some(v) = CACHE.lock().ok().and_then(|c| c.as_ref().and_then(|c| c.get(&key).cloned()))
+    {
+        crate::prof::count("  hidden lines from the cache");
+        return v;
+    }
+    let v = compute_lines(m, pr, hidden, centre, tangent, clip);
+    if m.key != 0
+        && let Ok(mut c) = CACHE.lock()
+    {
+        let c = c.get_or_insert_with(HashMap::new);
+        if c.len() >= 256 {
+            c.clear();
+        }
+        c.insert(key, v.clone());
+    }
+    v
+}
+
+fn compute_lines(m: &Model, pr: &Projector, hidden: bool, centre: bool, tangent: TangentEdges, clip: Option<Clip>) -> ViewLines {
     let diag = m.diag();
     let step = diag / 300.0;
     let eps = diag * 1e-5;
@@ -590,14 +627,14 @@ pub fn compute(m: &Model, pr: &Projector, hidden: bool, centre: bool, tangent: T
         .collect();
     let mut tan_vis: Vec<Vec<V2>> = Vec::new();
     let n_edges = curves.len();
-    let sil = silhouettes(m, pr.d);
+    let sil = crate::prof::time("  silhouettes", || silhouettes(m, pr.d));
     let sil_face: Vec<usize> = sil.iter().map(|s| s.0).collect();
     curves.extend(sil.into_iter().map(|s| s.1));
     let (mut edge_runs, mut sil_runs, mut hidden_runs) = (Vec::new(), Vec::new(), Vec::new());
     // the cut outline lies on the plane, nearest the viewer: always visible
     let mut cut = Vec::new();
     if let Some(cl) = &clip {
-        for c in crate::section::plane_cut(m, cl.c, cl.d) {
+        for c in crate::prof::time("  section cut", || crate::section::plane_cut(m, cl.c, cl.d)) {
             let p2 = simplify(&c.iter().map(|p| pr.p(*p)).collect::<Vec<_>>(), 0.005);
             if poly_len(&p2) > 0.05 {
                 cut.push(p2);
@@ -609,13 +646,15 @@ pub fn compute(m: &Model, pr: &Projector, hidden: bool, centre: bool, tangent: T
     let mut sil_vis: Vec<Vec<V2>> = Vec::new();
     let mut hid2: Vec<Vec<V2>> = Vec::new();
     let mut out_tan: Vec<Vec<V2>> = Vec::new();
-    for (ci, c) in curves.iter().enumerate() {
+    // each curve split into visible / hidden runs: independent, so spread over the cores
+    let classify_curve = |ci: usize| -> Option<Vec<(Vec<V3>, u8)>> {
+        let c = &curves[ci];
         if c.len() < 2 {
-            continue;
+            return None;
         }
         let proj: Vec<V2> = c.iter().map(|p| pr.p(*p)).collect();
         if poly_len(&proj) < 1e-3 {
-            continue; // seen end-on
+            return None; // seen end-on
         }
         // circles and ellipses: points back on the curve (in its plane, at its angle)
         let conic = if ci < n_edges {
@@ -640,7 +679,40 @@ pub fn compute(m: &Model, pr: &Projector, hidden: bool, centre: bool, tangent: T
             _ => p,
         };
         let faces: &[usize] = if ci < n_edges { &m.edges[ci].faces } else { std::slice::from_ref(&sil_face[ci - n_edges]) };
-        for (run, v) in classify(m, c, faces, pr.d, step, eps, cf.as_ref(), &snap) {
+        let kind = if ci < n_edges { "  classify: edges" } else { "  classify: silhouettes" };
+        Some(crate::prof::time(kind, || classify(m, c, faces, pr.d, step, eps, cf.as_ref(), &snap)))
+    };
+    let classified: Vec<Option<Vec<(Vec<V3>, u8)>>> = {
+        let n = curves.len();
+        let threads = std::thread::available_parallelism().map_or(1, |t| t.get()).min(16).min(n.max(1));
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let mut out: Vec<Option<Vec<(Vec<V3>, u8)>>> = (0..n).map(|_| None).collect();
+        let parts: Vec<Vec<(usize, Option<Vec<(Vec<V3>, u8)>>)>> = std::thread::scope(|sc| {
+            let hs: Vec<_> = (0..threads)
+                .map(|_| {
+                    sc.spawn(|| {
+                        let mut mine = Vec::new();
+                        loop {
+                            let ci = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            if ci >= n {
+                                break;
+                            }
+                            mine.push((ci, classify_curve(ci)));
+                        }
+                        mine
+                    })
+                })
+                .collect();
+            hs.into_iter().map(|h| h.join().expect("hidden-line worker")).collect()
+        });
+        for (ci, r) in parts.into_iter().flatten() {
+            out[ci] = r;
+        }
+        out
+    };
+    for (ci, runs) in classified.into_iter().enumerate() {
+        let Some(runs) = runs else { continue };
+        for (run, v) in runs {
             let p2: Vec<V2> = run.iter().map(|p| pr.p(*p)).collect();
             let p2 = simplify(&p2, 0.005);
             if poly_len(&p2) < 0.05 {
@@ -708,7 +780,7 @@ pub fn compute(m: &Model, pr: &Projector, hidden: bool, centre: bool, tangent: T
     // A line stopping just short of another (where it goes behind an
     // outline, or meets a fillet's outline) is taken on to it: the
     // visibility test has a little play next to edges.
-    close_gaps(&mut vis2, &tan_vis, 0.3);
+    crate::prof::time("  close gaps", || close_gaps(&mut vis2, &tan_vis, 0.3));
     // witness lines coinciding with outlines (e.g. a fillet's end seen end-on) are dropped
     let tangent = remove_covered(tan_vis, &grid, 0.05, 0.6);
     let hid2 = remove_covered(hid2, &grid, 0.08, 0.6);
@@ -724,8 +796,8 @@ pub fn compute(m: &Model, pr: &Projector, hidden: bool, centre: bool, tangent: T
             hid_out.push(k);
         }
     }
-    let center = if centre { centre_lines(m, pr, clip.as_ref(), eps) } else { vec![] };
-    ViewLines { visible: vis2, hidden: hid_out, center, cut, edge_runs, sil_runs, hidden_runs, tangent }
+    let (center, center_src) = if centre { centre_lines(m, pr, clip.as_ref(), eps) } else { (vec![], vec![]) };
+    ViewLines { visible: vis2, hidden: hid_out, center, center_src, cut, edge_runs, sil_runs, hidden_runs, tangent }
 }
 
 /// Extend an end of a line that doesn't touch another line to the nearest
@@ -792,31 +864,52 @@ fn close_gaps(lines: &mut [Vec<V2>], also: &[Vec<V2>], reach: f64) {
     }
 }
 
-fn centre_lines(m: &Model, pr: &Projector, clip: Option<&Clip>, eps: f64) -> Vec<(V2, V2)> {
+type CentreLines = (Vec<(V2, V2, usize)>, Vec<(bool, Vec<usize>)>);
+
+fn centre_lines(m: &Model, pr: &Projector, clip: Option<&Clip>, eps: f64) -> CentreLines {
     let ext = 2.5;
-    let mut out: Vec<(V2, V2)> = Vec::new();
-    let mut seen_c: Vec<(V2, f64)> = Vec::new();
-    let mut push_circle = |c: V2, r: f64, out: &mut Vec<(V2, V2)>| {
-        if seen_c.iter().any(|(q, rr)| q.dist(c) < 0.01 && (rr - r).abs() < 0.01) {
-            return;
-        }
-        // a smaller concentric circle may already provide a mark; keep largest
-        seen_c.retain(|(q, rr)| !(q.dist(c) < 0.01 && *rr < r));
-        out.retain(|(a, b)| !(((*a + *b) * 0.5).dist(c) < 0.01));
-        seen_c.push((c, r));
-        out.push((c - v2(r + ext, 0.0), c + v2(r + ext, 0.0)));
-        out.push((c - v2(0.0, r + ext), c + v2(0.0, r + ext)));
-    };
-    for e in &m.edges {
+    let round = |f: usize| matches!(m.faces[f].surf.kind, SurfKind::Cylinder { .. } | SurfKind::Cone { .. });
+    let mut out: Vec<(V2, V2, usize)> = Vec::new();
+    let mut src: Vec<(bool, Vec<usize>)> = Vec::new();
+    // centre marks: (centre, radius, feature)
+    let mut seen_c: Vec<(V2, f64, usize)> = Vec::new();
+    for (ei, e) in m.edges.iter().enumerate() {
         if let Curve::Circle { fr, r } = &e.curve {
             // a section shows only the axes of the holes it cuts, no centre marks
-            if clip.is_none() && fr.z.dot(pr.d).abs() > 1.0 - 1e-6 && e.sweep.abs() >= PI - 1e-6 && !clip.is_some_and(|c| c.removed(fr.o, eps)) {
-                push_circle(pr.p(fr.o), r * pr.scale, &mut out);
+            if !(clip.is_none() && fr.z.dot(pr.d).abs() > 1.0 - 1e-6 && e.sweep.abs() >= PI - 1e-6) {
+                continue;
             }
+            let (c, r) = (pr.p(fr.o), r * pr.scale);
+            // the round faces it bounds (or the circle itself)
+            let faces: Vec<usize> = e.faces.iter().copied().filter(|&f| round(f)).collect();
+            let feat = if faces.is_empty() { (false, vec![ei]) } else { (true, faces) };
+            if let Some(k) = seen_c.iter().position(|(q, _, _)| q.dist(c) < 0.01) {
+                // concentric circles share one mark (the largest), and every feature
+                let si = seen_c[k].2;
+                if feat.0 == src[si].0 {
+                    for id in feat.1 {
+                        if !src[si].1.contains(&id) {
+                            src[si].1.push(id);
+                        }
+                    }
+                }
+                if r > seen_c[k].1 + 0.01 {
+                    seen_c[k].1 = r;
+                    out.retain(|x| x.2 != si);
+                    out.push((c - v2(r + ext, 0.0), c + v2(r + ext, 0.0), si));
+                    out.push((c - v2(0.0, r + ext), c + v2(0.0, r + ext), si));
+                }
+                continue;
+            }
+            src.push(feat);
+            let si = src.len() - 1;
+            seen_c.push((c, r, si));
+            out.push((c - v2(r + ext, 0.0), c + v2(r + ext, 0.0), si));
+            out.push((c - v2(0.0, r + ext), c + v2(0.0, r + ext), si));
         }
     }
-    let mut axes: Vec<(V2, V2)> = Vec::new();
-    for f in &m.faces {
+    let mut axes: Vec<(V2, V2, Vec<usize>)> = Vec::new();
+    for (fi, f) in m.faces.iter().enumerate() {
         if let SurfKind::Cylinder { .. } | SurfKind::Cone { .. } = f.surf.kind {
             let fr = &f.surf.fr;
             if fr.z.dot(pr.d).abs() > 1e-6 || f.angular_coverage() < 0.5 {
@@ -841,20 +934,25 @@ fn centre_lines(m: &Model, pr: &Projector, clip: Option<&Clip>, eps: f64) -> Vec
             let dir = (b - a).norm();
             let (a, b) = (a - dir * ext, b + dir * ext);
             // merge collinear overlapping axes
-            if let Some(ax) = axes.iter_mut().find(|(p, q)| {
+            if let Some(ax) = axes.iter_mut().find(|(p, q, _)| {
                 point_seg_dist(a, *p - (*q - *p) * 100.0, *q + (*q - *p) * 100.0) < 0.01
                     && point_seg_dist(b, *p - (*q - *p) * 100.0, *q + (*q - *p) * 100.0) < 0.01
             }) {
                 let pts = [ax.0, ax.1, a, b];
                 let d0 = (ax.1 - ax.0).norm();
-                let mn = pts.iter().min_by(|x, y| x.dot(d0).total_cmp(&y.dot(d0))).unwrap();
-                let mx = pts.iter().max_by(|x, y| x.dot(d0).total_cmp(&y.dot(d0))).unwrap();
-                *ax = (*mn, *mx);
+                let mn = *pts.iter().min_by(|x, y| x.dot(d0).total_cmp(&y.dot(d0))).unwrap();
+                let mx = *pts.iter().max_by(|x, y| x.dot(d0).total_cmp(&y.dot(d0))).unwrap();
+                ax.0 = mn;
+                ax.1 = mx;
+                ax.2.push(fi);
             } else {
-                axes.push((a, b));
+                axes.push((a, b, vec![fi]));
             }
         }
     }
-    out.extend(axes);
-    out
+    for (a, b, faces) in axes {
+        src.push((true, faces));
+        out.push((a, b, src.len() - 1));
+    }
+    (out, src)
 }

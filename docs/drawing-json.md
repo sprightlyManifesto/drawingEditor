@@ -47,6 +47,7 @@ A front view with the top and right views projected from it, and an overall leng
 |---|---|---|---|
 | `step_file` | string | | The STEP part, relative to the JSON file. It can be given on the command line instead. |
 | `projection` | `"third"` or `"first"` | config.json (`"third"`) | Projection system. `"3rd"`, `"third_angle"`, `"1st"` and `"first_angle"` also work. |
+| `line_weights` | object | config.json | Line widths of this drawing in mm: `{ "visible": 0.5, "hidden": 0.25, "thin": 0.25, "border": 0.7 }`; any left out come from config.json. In the editor: right-click (or click) the title block. |
 | `sheet` | object | A3 landscape | `{ "size": "A0".."A4", "orientation": "landscape" or "portrait", "border": false }`. `"border": false` leaves out the drawing border and the title block; the views may then use their space. |
 | `title` | object | | Title block text (also accepted as `title_block`). See [Title block](#title-block). |
 | `views` | list | *required* | Base views. See [Base views](#base-views). |
@@ -108,6 +109,8 @@ A base view looks at the part from a direction you give. The views made from it 
 | `sections` | list | | [Section views](#section-views) cut from this view. |
 | `details` | list | | [Detail views](#detail-views) of parts of this view. |
 | `dimensions`, `gdt`, `datums`, `datum_targets`, `notes`, `threads` | lists | | [Annotations](#annotations) shown in this view. |
+| `constructedGeometry` | list | | [Construction points](#construction-points) of this view, which annotations can refer to. |
+| `hidden_axes` | list of selectors | | Features whose centre line (or centre mark) is left out of this view. |
 
 Common orientations (Z up in the model):
 
@@ -227,6 +230,39 @@ An angled elliptical detail:
 ```json
 "details": [ { "label": "E", "point": [40, 0, 10], "shape": "ellipse", "radius": 12, "radius2": 6, "angle": 30 } ]
 ```
+
+## Construction points
+
+A view's `constructedGeometry` lists construction geometry made from its features, which annotations in the same view can refer to (in `from`, `to`, `of`, `attach`, `origin`, `targets` and so on) and which is drawn thin:
+
+- **Points** (`cpoint('P1')`): where two lines of the view meet, extended if need be, such as the virtual sharp of a chamfered or rounded corner. The lines are straight edges, flat faces seen edge-on, or construction lines. Drawn as a small cross, with thin extensions of the two lines running to it.
+- **Lines** (`cline('L1')`): between two points, dashed. A point is a vertex, a circle (its centre), any other feature (its reference point) or a construction point.
+- **Circles** (`ccircle('C1')`): round a centre, through a point (or with a `radius`), dashed, in the plane of the view. A diameter or radius dimension can be put on one.
+
+Items are made in order, so an item can use those listed before it.
+
+| field | type | default | meaning |
+|---|---|---|---|
+| `name` | string | *required* | Name annotations use: `cpoint('P1')`, `cline('L1')`, `ccircle('C1')`. |
+| `type` | `"point"`, `"line"` or `"circle"` | `"point"` | What it is. |
+| `intersect` | two selectors | | Point: the two lines. |
+| `through` | selectors | | Line: its two points. Circle: a point it passes through. |
+| `center` | selector | | Circle: its centre. |
+| `radius` | number | | Circle: its radius in model mm, instead of `through`. |
+
+```json
+"constructedGeometry": [
+  { "name": "P1", "type": "point", "intersect": ["faces('>Y')", "faces('>X')"] },
+  { "name": "L1", "type": "line", "through": ["cpoint('P1')", "edges('%CIRCLE').edges('<X')"] },
+  { "name": "C1", "type": "circle", "center": "edges('%CIRCLE').edges('>X')", "through": ["cpoint('P1')"] }
+],
+"dimensions": [
+  { "type": "linear", "from": "faces('<X')", "to": "cpoint('P1')", "direction": "horizontal" },
+  { "type": "diameter", "of": "ccircle('C1')" }
+]
+```
+
+In the editor, in Geometry mode: pick two straight lines and press **Add construction point**, or two points and press **Add construction line** or **Add construction circle** (centred on the first point picked). Construction items are picked in Geometry mode like other geometry (click on the cross or the dashes) and dimensioned with **Add dimension**; in Annotations mode clicking one opens a menu of the dimensions it can have (diameter, radius, length, angle, distances to a feature you pick), with **Edit JSON…** and **Delete**.
 
 ## Annotations
 
@@ -485,6 +521,7 @@ Selectors use CadQuery's syntax. `faces(...)`, `edges(...)` and `vertices(...)` 
 | `%PLANE`, `%CYLINDER`, `%CONE`, `%SPHERE`, `%TORUS` | faces of that surface type |
 | `%LINE`, `%CIRCLE`, `%ELLIPSE`, `%BSPLINE` | edges of that curve type |
 | `@12` | item 12 of the STEP model, as the editor shows it (only stable while the STEP file doesn't change) |
+| `cpoint('P1')`, `cline('L1')`, `ccircle('C1')` | construction geometry of the view (see [Construction points](#construction-points)); on its own, not chained |
 | `and`, `or`, `not`, `exc`, `( )` | combine selectors |
 
 ```json

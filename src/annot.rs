@@ -31,6 +31,16 @@ pub struct Circ {
     pub full: bool,
 }
 
+/// ("point", "P1") for a construction geometry selector `cpoint('P1')`
+/// (`cline('L1')`: "line", `ccircle('C1')`: "circle").
+pub fn cgeom_ref(s: &str) -> Option<(&'static str, &str)> {
+    let s = s.trim();
+    let (kind, rest) = [("cpoint(", "point"), ("cline(", "line"), ("ccircle(", "circle")].iter().find_map(|(p, k)| s.strip_prefix(p).map(|r| (*k, r)))?;
+    let t = rest.strip_suffix(')')?.trim();
+    let t = t.strip_prefix('\'').and_then(|t| t.strip_suffix('\'')).or_else(|| t.strip_prefix('"').and_then(|t| t.strip_suffix('"')))?;
+    Some((kind, t.trim()))
+}
+
 pub fn resolve(m: &Model, s: &str) -> Result<Vec<RefGeo>, String> {
     let sel = select(m, s)?;
     let mut out = Vec::new();
@@ -227,6 +237,8 @@ pub struct Annotator<'a> {
     pub hidden: bool,
     /// Section view: the cutting plane.
     pub clip: Option<crate::hlr::Clip>,
+    /// The view's construction geometry by "point:P1" / "line:L1" / "circle:C1".
+    cgeom: std::collections::HashMap<String, RefGeo>,
 }
 
 impl<'a> Annotator<'a> {
@@ -241,7 +253,178 @@ impl<'a> Annotator<'a> {
                 segs.push((w[0], w[1]));
             }
         }
-        Annotator { m, pr, cfg, geom, segs, dims: vec![], gdt: vec![], obst: vec![], soft: vec![], used: [0.0; 4], warnings: vec![], tol_warn: Default::default(), hidden: false, clip: None }
+        Annotator { m, pr, cfg, geom, segs, dims: vec![], gdt: vec![], obst: vec![], soft: vec![], used: [0.0; 4], warnings: vec![], tol_warn: Default::default(), hidden: false, clip: None, cgeom: Default::default() }
+    }
+
+    /// The geometry a selector picks: construction geometry of the view
+    /// (`cpoint('P1')`, `cline('L1')`, `ccircle('C1')`), or features of the model.
+    fn res(&self, s: &str) -> Result<Vec<RefGeo>, String> {
+        if let Some((kind, name)) = cgeom_ref(s) {
+            return match self.cgeom.get(&format!("{}:{}", kind, name)) {
+                Some(g) => Ok(vec![g.clone()]),
+                None => Err(format!("no construction {} '{}' in this view", kind, name)),
+            };
+        }
+        resolve(self.m, s)
+    }
+
+    /// A point of the model a construction item is made from: a vertex, the
+    /// centre of a circle, a construction point (any feature: its reference point).
+    fn point_of(&self, sel: &str) -> Result<V3, String> {
+        let refs = self.res(sel)?;
+        if refs.is_empty() {
+            return Err(format!("{} picks nothing", sel));
+        }
+        Ok(avg(&refs))
+    }
+
+    /// The view's construction geometry, in order (an item can use those
+    /// before it): points where two lines meet, lines between two points,
+    /// circles round a centre. Drawn thin (lines and circles dashed); each is
+    /// a group annotations and the editor refer to by name.
+    fn constructed(&mut self, spec: &Annotations, base: &str) {
+        let s = self.pr.scale;
+        // a sheet point back in the model, at the given depth
+        let unproject = |pr: &Projector, p2: V2, depth: f64| pr.o + pr.r * (p2.x / s) + pr.u * (p2.y / s) + pr.d * depth;
+        for (i, c) in spec.constructed.iter().enumerate() {
+            let kind = if c.kind.is_empty() { "point".to_string() } else { c.kind.to_ascii_lowercase() };
+            let name = c.name.trim().to_string();
+            let what = format!("construction {} '{}'", kind, name);
+            if name.is_empty() {
+                self.warnings.push(format!("{}: needs a \"name\"", what));
+                continue;
+            }
+            let src = format!("{}/constructedGeometry/{}", base, i);
+            let (geo, prims, sel, pts): (RefGeo, Vec<Prim>, String, Vec<(&'static str, V2)>) = match kind.as_str() {
+                "point" => {
+                    if c.intersect.len() != 2 {
+                        self.warnings.push(format!("{}: needs two lines in \"intersect\"", what));
+                        continue;
+                    }
+                    // each line: its 2D segment, and its 3D ends when it is an edge or a construction line
+                    let mut lines: Vec<((V2, V2), Option<(V3, V3)>, V3)> = Vec::new();
+                    for sel in &c.intersect {
+                        match self.res(sel) {
+                            Ok(refs) => match self.ref_line(&refs) {
+                                Some(l) => lines.push((l, refs.iter().find_map(|r| r.line), avg(&refs))),
+                                None => self.warnings.push(format!("{}: {} is not a straight line in this view", what, sel)),
+                            },
+                            Err(e) => self.warnings.push(format!("{}: {}", what, e)),
+                        }
+                    }
+                    if lines.len() != 2 {
+                        continue;
+                    }
+                    let ((a0, a1), la, ra) = lines[0];
+                    let ((b0, b1), lb, _) = lines[1];
+                    let (da, db) = (a1 - a0, b1 - b0);
+                    let den = da.cross(db);
+                    if den.abs() < 1e-9 * da.len() * db.len() {
+                        self.warnings.push(format!("{}: the two lines are parallel", what));
+                        continue;
+                    }
+                    let t = (b0 - a0).cross(db) / den;
+                    let u = (b0 - a0).cross(da) / den;
+                    let p2 = a0 + da * t;
+                    // in the model: along the first line (a projection keeps the ratio
+                    // along a line), else the second's, else at the first's depth
+                    let p3 = match (la, lb) {
+                        (Some((x0, x1)), _) if self.pr.p(x0).dist(a0) + self.pr.p(x1).dist(a1) < 1e-6 => x0 + (x1 - x0) * t,
+                        (Some((x0, x1)), _) if self.pr.p(x0).dist(a1) + self.pr.p(x1).dist(a0) < 1e-6 => x1 + (x0 - x1) * t,
+                        (_, Some((y0, y1))) if self.pr.p(y0).dist(b0) + self.pr.p(y1).dist(b1) < 1e-6 => y0 + (y1 - y0) * u,
+                        (_, Some((y0, y1))) if self.pr.p(y0).dist(b1) + self.pr.p(y1).dist(b0) < 1e-6 => y1 + (y0 - y1) * u,
+                        _ => unproject(&self.pr, p2, (ra - self.pr.o).dot(self.pr.d)),
+                    };
+                    // drawn: each line carried on to the point (past it a little), and a small cross
+                    let mut prims = Vec::new();
+                    for (q0, q1) in [(a0, a1), (b0, b1)] {
+                        let near = if q0.dist(p2) < q1.dist(p2) { q0 } else { q1 };
+                        let dir = (p2 - near).norm();
+                        if near.dist(p2) > 0.05 && (q1 - q0).norm().dot(dir).abs() > 0.999 && point_seg_dist(p2, q0, q1) >= 0.05 {
+                            prims.push(Prim::Line { a: near + dir * 0.5, b: p2 + dir * 1.5, cls: "thin" });
+                        }
+                    }
+                    let k = 1.2;
+                    prims.push(Prim::Line { a: p2 - v2(k, k), b: p2 + v2(k, k), cls: "thin" });
+                    prims.push(Prim::Line { a: p2 - v2(k, -k), b: p2 + v2(k, -k), cls: "thin" });
+                    let g = RefGeo { rep: p3, ext: vec![p3], circ: None, line: None, plane_n: None };
+                    (g, prims, format!("cpoint('{}')", name), vec![("data-pt", p2)])
+                }
+                "line" => {
+                    if c.through.len() != 2 {
+                        self.warnings.push(format!("{}: needs two points in \"through\"", what));
+                        continue;
+                    }
+                    let (a3, b3) = match (self.point_of(&c.through[0]), self.point_of(&c.through[1])) {
+                        (Ok(a), Ok(b)) => (a, b),
+                        (Err(e), _) | (_, Err(e)) => {
+                            self.warnings.push(format!("{}: {}", what, e));
+                            continue;
+                        }
+                    };
+                    let (a2, b2) = (self.pr.p(a3), self.pr.p(b3));
+                    if a2.dist(b2) < 1e-6 {
+                        self.warnings.push(format!("{}: its two points are the same in this view", what));
+                        continue;
+                    }
+                    let g = RefGeo { rep: (a3 + b3) * 0.5, ext: vec![a3, b3], circ: None, line: Some((a3, b3)), plane_n: None };
+                    (g, vec![Prim::Line { a: a2, b: b2, cls: "construct" }], format!("cline('{}')", name), vec![("data-p0", a2), ("data-p1", b2)])
+                }
+                "circle" => {
+                    let Some(csel) = c.center.as_deref() else {
+                        self.warnings.push(format!("{}: needs a \"center\"", what));
+                        continue;
+                    };
+                    let c3 = match self.point_of(csel) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            self.warnings.push(format!("{}: {}", what, e));
+                            continue;
+                        }
+                    };
+                    let c2 = self.pr.p(c3);
+                    // its radius in the view: through a point, or given (model mm)
+                    let r2 = match (c.through.first(), c.radius) {
+                        (Some(t), _) => match self.point_of(t) {
+                            Ok(q) => self.pr.p(q).dist(c2),
+                            Err(e) => {
+                                self.warnings.push(format!("{}: {}", what, e));
+                                continue;
+                            }
+                        },
+                        (None, Some(r)) => r * s,
+                        (None, None) => {
+                            self.warnings.push(format!("{}: needs a point in \"through\" or a \"radius\"", what));
+                            continue;
+                        }
+                    };
+                    if r2 < 1e-6 {
+                        self.warnings.push(format!("{}: its radius is zero", what));
+                        continue;
+                    }
+                    let r3 = r2 / s;
+                    let ring: Vec<V3> = (0..=72).map(|k| (k as f64).to_radians() * 5.0).map(|a| c3 + self.pr.r * (r3 * a.cos()) + self.pr.u * (r3 * a.sin())).collect();
+                    let circ = Circ { c: c3, axis: self.pr.d, r: r3, pts: ring.clone(), v_range: (0.0, 0.0), full: true };
+                    let g = RefGeo { rep: c3, ext: ring, circ: Some(circ), line: None, plane_n: None };
+                    (g, vec![Prim::Circle { c: c2, r: r2, cls: "construct" }], format!("ccircle('{}')", name), vec![("data-c", c2)])
+                }
+                k => {
+                    self.warnings.push(format!("{}: unknown type '{}' (point, line or circle)", what, k));
+                    continue;
+                }
+            };
+            let short = match kind.as_str() {
+                "line" => "line",
+                "circle" => "circle",
+                _ => "point",
+            };
+            self.cgeom.insert(format!("{}:{}", short, name), geo.clone());
+            let mut attrs = vec![("data-src", src), ("data-name", name.clone()), ("data-ctype", short.to_string()), ("data-sel", sel)];
+            if let Some(cc) = &geo.circ {
+                attrs.push(("data-r", format!("{}", cc.r * s)));
+            }
+            self.dims.push(ann("cgeom", attrs, pts, vec![role("static", prims)]));
+        }
     }
 
     fn h(&self) -> f64 {
@@ -619,7 +802,7 @@ impl<'a> Annotator<'a> {
             self.warnings.push(format!("{} dimension is missing its '{}' selector", what, what));
             return None;
         };
-        match resolve(self.m, s) {
+        match self.res(s) {
             Ok(r) => Some(r),
             Err(e) => {
                 self.warnings.push(e);
@@ -745,6 +928,8 @@ impl<'a> Annotator<'a> {
     /// Build the annotations of a view; `base` is the JSON pointer of the
     /// view's spec.
     pub fn build(&mut self, ann: &Annotations, base: &str) {
+        // construction points first: annotations may refer to them
+        self.constructed(ann, base);
         // datums that name a frame go on that frame
         let mut gdts = ann.gdt.clone();
         for t in ann.datums.iter().filter(|t| t.gdt.is_some()) {
@@ -1013,7 +1198,7 @@ impl<'a> Annotator<'a> {
     /// Key of the feature a selector picks: holes / shafts by their axis
     /// (coaxial features match), planes by their plane, others by position.
     fn feat_key(&self, sel: &str) -> Option<String> {
-        let r = resolve(self.m, sel).ok()?;
+        let r = self.res(sel).ok()?;
         let g = r.first()?;
         let f = |v: f64| format!("{:.3}", (v * 1000.0).round() / 1000.0 + 0.0);
         let canon = |a: V3| if a.x < -1e-9 || (a.x.abs() <= 1e-9 && (a.y < -1e-9 || (a.y.abs() <= 1e-9 && a.z < 0.0))) { a * -1.0 } else { a };
@@ -1458,7 +1643,7 @@ impl<'a> Annotator<'a> {
         let gap_of = |o: &OrdRef| o.gap.unwrap_or(self.cfg.ext_gap).max(0.0);
         let mut targets = vec![(origin.clone(), true, -1i64, d.origin.as_ref().map_or(self.cfg.ext_gap, gap_of))];
         for (i, t) in d.targets.iter().enumerate() {
-            match resolve(self.m, &t.of) {
+            match self.res(&t.of) {
                 Ok(r) => targets.push((r, false, i as i64, gap_of(t))),
                 Err(e) => self.warnings.push(e),
             }
@@ -1730,7 +1915,7 @@ impl<'a> Annotator<'a> {
     // ------------------------------------------------------- GD&T / notes
 
     fn attach_ref(&mut self, s: &str) -> Option<RefGeo> {
-        match resolve(self.m, s) {
+        match self.res(s) {
             Ok(mut r) => Some(r.remove(0)),
             Err(e) => {
                 self.warnings.push(e);

@@ -6,6 +6,7 @@
 
 mod annot;
 mod autodraw;
+mod prof;
 mod brep;
 mod config;
 mod geom;
@@ -201,12 +202,28 @@ fn add_projected(
 pub fn load_model(step_path: &Path) -> Result<brep::Model, String> {
     let step_txt = std::fs::read(step_path).map_err(|e| format!("{}: {}", step_path.display(), e))?;
     let sf = step::parse(&String::from_utf8_lossy(&step_txt))?;
-    brep::build(&sf)
+    let mut m = brep::build(&sf)?;
+    m.key = {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        step_txt.hash(&mut h);
+        h.finish()
+    };
+    Ok(m)
 }
 
 /// Render a drawing: the SVG text and the warnings.
 pub fn render(spec: &DrawingSpec, step_path: &Path, cfg: &Config) -> Result<(String, Vec<String>), String> {
-    let cfg = cfg.clone();
+    let mut cfg = cfg.clone();
+    // the drawing's own line widths
+    if let Some(w) = &spec.line_weights {
+        let ok = |v: Option<f64>| v.filter(|x| *x > 0.0 && x.is_finite());
+        cfg.line_visible = ok(w.visible).unwrap_or(cfg.line_visible);
+        cfg.line_hidden = ok(w.hidden).unwrap_or(cfg.line_hidden);
+        cfg.line_thin = ok(w.thin).unwrap_or(cfg.line_thin);
+        cfg.line_border = ok(w.border).unwrap_or(cfg.line_border);
+    }
+    let cfg = cfg;
     let model = load_model(step_path)?;
     eprintln!(
         "{}: {} faces, {} edges, {} vertices",
@@ -376,6 +393,7 @@ pub fn render(spec: &DrawingSpec, step_path: &Path, cfg: &Config) -> Result<(Str
         let _ = writeln!(s, "</g>");
     }
     s.push_str("</svg>\n");
+    crate::prof::report();
     Ok((s, warnings))
 }
 

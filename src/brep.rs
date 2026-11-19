@@ -296,6 +296,9 @@ pub struct BSurf {
     gu: usize,
     gv: usize,
     grid: Vec<V3>,
+    /// Blocks of grid cells with their bounding boxes, so a ray skips most
+    /// of the surface: (cell rows i0..i1, columns j0..j1, box).
+    blocks: Vec<(usize, usize, usize, usize, BBox3)>,
 }
 
 /// de Boor on homogeneous points: `d` holds the deg + 1 points of span `k`.
@@ -343,7 +346,7 @@ impl BSurf {
             }
         }
         let (gu, gv) = ((4 * nu).clamp(16, 96), (4 * nv).clamp(16, 96));
-        let mut b = BSurf { du, dv, nu, nv, cw, ku, kv, closed_u: false, closed_v: false, gu, gv, grid: vec![] };
+        let mut b = BSurf { du, dv, nu, nv, cw, ku, kv, closed_u: false, closed_v: false, gu, gv, grid: vec![], blocks: vec![] };
         let (u0, u1) = b.urange();
         let (v0, v1) = b.vrange();
         b.grid = (0..=gu).flat_map(|i| (0..=gv).map(move |j| (u0 + (u1 - u0) * i as f64 / gu as f64, v0 + (v1 - v0) * j as f64 / gv as f64))).map(|(u, v)| b.eval(u, v)).collect();
@@ -352,6 +355,19 @@ impl BSurf {
             bb
         });
         let tol = size.max.dist(size.min) * 1e-6 + 1e-9;
+        const BLOCK: usize = 8;
+        for i0 in (0..gu).step_by(BLOCK) {
+            for j0 in (0..gv).step_by(BLOCK) {
+                let (i1, j1) = ((i0 + BLOCK).min(gu), (j0 + BLOCK).min(gv));
+                let mut bb = BBox3::default();
+                for i in i0..=i1 {
+                    for j in j0..=j1 {
+                        bb.add(b.grid[i * (gv + 1) + j]);
+                    }
+                }
+                b.blocks.push((i0, i1, j0, j1, bb.expand(tol * 10.0)));
+            }
+        }
         b.closed_u = (0..=4).all(|k| {
             let v = v0 + (v1 - v0) * k as f64 / 4.0;
             b.eval(u0, v).dist(b.eval(u1, v)) < tol
@@ -414,8 +430,28 @@ impl BSurf {
     /// Parameters of the point of the surface nearest p.
     pub fn param(&self, p: V3) -> (f64, f64) {
         let ((u0, u1), (v0, v1)) = (self.urange(), self.vrange());
-        let k = (0..self.grid.len()).min_by(|&a, &b| self.grid[a].dist(p).total_cmp(&self.grid[b].dist(p))).unwrap_or(0);
-        let (i, j) = (k / (self.gv + 1), k % (self.gv + 1));
+        // the nearest grid point: on every 4th point first, then around the best of those
+        let at = |i: usize, j: usize| self.grid[i * (self.gv + 1) + j].dist(p);
+        let st = 4;
+        let mut best = (f64::MAX, 0, 0);
+        for i in (0..=self.gu).step_by(st) {
+            for j in (0..=self.gv).step_by(st) {
+                let d = at(i, j);
+                if d < best.0 {
+                    best = (d, i, j);
+                }
+            }
+        }
+        let (bi, bj) = (best.1, best.2);
+        for i in bi.saturating_sub(st)..=(bi + st).min(self.gu) {
+            for j in bj.saturating_sub(st)..=(bj + st).min(self.gv) {
+                let d = at(i, j);
+                if d < best.0 {
+                    best = (d, i, j);
+                }
+            }
+        }
+        let (i, j) = (best.1, best.2);
         let (mut u, mut v) = (u0 + (u1 - u0) * i as f64 / self.gu as f64, v0 + (v1 - v0) * j as f64 / self.gv as f64);
         for _ in 0..12 {
             let (s, su, sv) = self.derivs(u, v);
@@ -455,31 +491,36 @@ impl BSurf {
         let ((u0, u1), (v0, v1)) = (self.urange(), self.vrange());
         let g = |i: usize, j: usize| self.grid[i * (self.gv + 1) + j];
         let mut out: Vec<f64> = Vec::new();
-        for i in 0..self.gu {
-            for j in 0..self.gv {
-                let (a, b, c, e) = (g(i, j), g(i + 1, j), g(i + 1, j + 1), g(i, j + 1));
-                for (t0, t1, t2, uv) in [(a, b, c, [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)]), (a, c, e, [(0.0, 0.0), (1.0, 1.0), (0.0, 1.0)])] {
-                    let Some((t, bu, bv)) = tri_hit(p, d, t0, t1, t2) else { continue };
-                    // start Newton from the hit's place in the cell
-                    let fu = uv[0].0 * (1.0 - bu - bv) + uv[1].0 * bu + uv[2].0 * bv;
-                    let fv = uv[0].1 * (1.0 - bu - bv) + uv[1].1 * bu + uv[2].1 * bv;
-                    let mut u = u0 + (u1 - u0) * (i as f64 + fu) / self.gu as f64;
-                    let mut v = v0 + (v1 - v0) * (j as f64 + fv) / self.gv as f64;
-                    let mut t = t;
-                    for _ in 0..8 {
-                        let (s, su, sv) = self.derivs(u, v);
-                        let r = s - (p + d * t);
-                        // [su sv -d] (du dv dt) = -r
-                        let m = [[su.x, sv.x, -d.x], [su.y, sv.y, -d.y], [su.z, sv.z, -d.z]];
-                        let Some(x) = solve3(m, [-r.x, -r.y, -r.z]) else { break };
-                        (u, v) = self.wrap(u + x[0], v + x[1]);
-                        t += x[2];
-                        if x[2].abs() < 1e-12 {
-                            break;
+        for &(i0, i1, j0, j1, ref bb) in &self.blocks {
+            if !bb.ray_hits(p, d) {
+                continue;
+            }
+            for i in i0..i1 {
+                for j in j0..j1 {
+                    let (a, b, c, e) = (g(i, j), g(i + 1, j), g(i + 1, j + 1), g(i, j + 1));
+                    for (t0, t1, t2, uv) in [(a, b, c, [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)]), (a, c, e, [(0.0, 0.0), (1.0, 1.0), (0.0, 1.0)])] {
+                        let Some((t, bu, bv)) = tri_hit(p, d, t0, t1, t2) else { continue };
+                        // start Newton from the hit's place in the cell
+                        let fu = uv[0].0 * (1.0 - bu - bv) + uv[1].0 * bu + uv[2].0 * bv;
+                        let fv = uv[0].1 * (1.0 - bu - bv) + uv[1].1 * bu + uv[2].1 * bv;
+                        let mut u = u0 + (u1 - u0) * (i as f64 + fu) / self.gu as f64;
+                        let mut v = v0 + (v1 - v0) * (j as f64 + fv) / self.gv as f64;
+                        let mut t = t;
+                        for _ in 0..8 {
+                            let (s, su, sv) = self.derivs(u, v);
+                            let r = s - (p + d * t);
+                            // [su sv -d] (du dv dt) = -r
+                            let m = [[su.x, sv.x, -d.x], [su.y, sv.y, -d.y], [su.z, sv.z, -d.z]];
+                            let Some(x) = solve3(m, [-r.x, -r.y, -r.z]) else { break };
+                            (u, v) = self.wrap(u + x[0], v + x[1]);
+                            t += x[2];
+                            if x[2].abs() < 1e-12 {
+                                break;
+                            }
                         }
-                    }
-                    if !out.iter().any(|o| (o - t).abs() < 1e-7) {
-                        out.push(t);
+                        if !out.iter().any(|o| (o - t).abs() < 1e-7) {
+                            out.push(t);
+                        }
                     }
                 }
             }
@@ -706,7 +747,7 @@ impl Face {
     pub fn bspline_contour(&self, g: &dyn Fn(f64, f64) -> f64) -> Vec<Vec<V3>> {
         let SurfKind::BSpline(b) = &self.surf.kind else { return vec![] };
         let ((u0, u1), (v0, v1)) = (b.urange(), b.vrange());
-        let (nu, nv) = (b.gu * 3, b.gv * 3);
+        let (nu, nv) = (b.gu * 2, b.gv * 2);
         // in a closed direction the grid starts off the seam (a curve along
         // the seam would sit on the grid's edge) and wraps round
         let (pu, pv) = (if b.closed_u { 0.37 } else { 0.0 }, if b.closed_v { 0.37 } else { 0.0 });
@@ -834,6 +875,8 @@ pub struct Model {
     pub faces: Vec<Face>,
     pub bbox: BBox3,
     pub vert_edges: Vec<Vec<usize>>,
+    /// Identifies the model's STEP text (a hash), for caching what is computed from it.
+    pub key: u64,
 }
 
 impl Model {
@@ -1317,7 +1360,7 @@ pub fn build(f: &StepFile) -> Result<Model, String> {
             vert_edges[e.v1].push(i);
         }
     }
-    Ok(Model { verts, edges, faces: out_faces, bbox, vert_edges })
+    Ok(Model { verts, edges, faces: out_faces, bbox, vert_edges, key: 0 })
 }
 
 fn face_center(surf: &Surface, loops: &[Vec<V3>], uv: &[Vec<V2>]) -> V3 {

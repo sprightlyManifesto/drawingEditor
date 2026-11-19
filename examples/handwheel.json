@@ -50,10 +50,34 @@
           ],
           "threads": [
             { "of": "faces('%CYLINDER').faces('>X')", "size": "M6", "callout": false }
+          ],
+          "distance": 155.2
+        }
+      ],
+      "projected": [
+        {
+          "position": "left",
+          "projected": []
+        }
+      ],
+      "location": [180.6, 193.82],
+      "constructedGeometry": [
+        {
+          "name": "C1",
+          "type": "circle",
+          "center": "edges('>Z[8]')",
+          "through": [
+            "edges('>X[5]')"
           ]
         }
       ],
-      "projected": []
+      "dimensions": [
+        {
+          "type": "diameter",
+          "of": "ccircle('C1')",
+          "text": "2X Ø<> PCD"
+        }
+      ]
     },
     {
       "name": "front_bottom",

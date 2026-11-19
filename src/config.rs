@@ -308,6 +308,44 @@ pub struct Annotations {
     pub datum_targets: Vec<DatumTargetSpec>,
     pub notes: Vec<NoteSpec>,
     pub threads: Vec<ThreadSpec>,
+    /// Centre lines and centre marks left out: the features (selectors) whose axes are deleted.
+    pub hidden_axes: Vec<String>,
+    /// Construction geometry of the view (points annotations can refer to as `cpoint('P1')`).
+    #[serde(rename = "constructedGeometry")]
+    pub constructed: Vec<ConstructedSpec>,
+}
+
+/// An item of a view's construction geometry: a point where two lines of
+/// the view meet (extended if need be), a line between two points, or a
+/// circle round a centre. Points are vertices, circle centres or other
+/// construction points; lines are straight edges, flat faces seen edge-on or
+/// construction lines.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct ConstructedSpec {
+    /// Name annotations refer to it by: `cpoint('<name>')`, `cline(..)`, `ccircle(..)`.
+    pub name: String,
+    /// "point" (default), "line" or "circle"
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// point: the two lines it is the intersection of.
+    pub intersect: Vec<String>,
+    /// line: its two points; circle: a point it passes through.
+    pub through: Vec<String>,
+    /// circle: its centre.
+    pub center: Option<String>,
+    /// circle: its radius (model mm), instead of a point it passes through.
+    pub radius: Option<f64>,
+}
+
+/// Line widths for the drawing (mm), over config.json.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct LineWeights {
+    pub visible: Option<f64>,
+    pub hidden: Option<f64>,
+    pub thin: Option<f64>,
+    pub border: Option<f64>,
 }
 
 /// A cosmetic thread on a hole (internal) or a shaft (external).
@@ -508,6 +546,8 @@ pub struct DrawingSpec {
     pub sheet: Option<SheetSpec>,
     #[serde(default, alias = "title_block")]
     pub title: TitleBlock,
+    /// Line widths of this drawing (default config.json).
+    pub line_weights: Option<LineWeights>,
     pub views: Vec<ViewSpec>,
 }
 

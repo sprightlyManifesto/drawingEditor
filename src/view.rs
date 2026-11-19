@@ -381,8 +381,8 @@ pub fn build_view(m: &Model, cfg: &Config, o: ViewOpts, warnings: &mut Vec<Strin
     let name = o.name.as_str();
     let pr = Projector { o: m.bbox.center(), r: frame.0, u: frame.1, d: frame.2, scale: o.scale };
     let clip = o.section.as_ref().map(|s| s.0);
-    let mut lines = hlr::compute(m, &pr, o.hidden, cfg.centre_lines, cfg.tangent_edges, clip);
-    let pick = if cfg.pick_layer { pick_layer(m, &pr, &lines, clip.as_ref(), o.detail.map(|(c, sh, _)| sh.ell(pr.p(c), o.scale))) } else { vec![] };
+    let mut lines = crate::prof::time(&format!("view {}: hidden lines", o.name), || hlr::compute(m, &pr, o.hidden, cfg.centre_lines, cfg.tangent_edges, clip));
+    let pick = crate::prof::time(&format!("view {}: pick layer", o.name), || if cfg.pick_layer { pick_layer(m, &pr, &lines, clip.as_ref(), o.detail.map(|(c, sh, _)| sh.ell(pr.p(c), o.scale))) } else { vec![] });
     let mut hatch = Vec::new();
     if let Some((_, ang, sp)) = &o.section {
         if lines.cut.is_empty() {
@@ -401,7 +401,7 @@ pub fn build_view(m: &Model, cfg: &Config, o: ViewOpts, warnings: &mut Vec<Strin
         lines.visible = clip_all(&lines.visible);
         lines.hidden = clip_all(&lines.hidden);
         lines.tangent = clip_all(&lines.tangent);
-        lines.center = clip_segs(&lines.center);
+        lines.center = lines.center.iter().flat_map(|(a, b, k)| clip_poly_ell(&[*a, *b], &e).into_iter().map(move |l| (l[0], *l.last().unwrap(), *k))).collect();
         hatch = clip_segs(&hatch);
         if lines.visible.is_empty() {
             warnings.push(format!("view '{}': no geometry inside the detail circle", name));
@@ -426,8 +426,30 @@ pub fn build_view(m: &Model, cfg: &Config, o: ViewOpts, warnings: &mut Vec<Strin
     for l in &lines.hidden {
         geometry.push(Prim::Poly { pts: l.clone(), closed: false, cls: "hidden" });
     }
-    for (a, b) in &lines.center {
-        geometry.push(Prim::Line { a: *a, b: *b, cls: "center" });
+    // centre lines, one group per feature (the editor selects and deletes them),
+    // except those the view's "hidden_axes" leaves out
+    let hidden_axes: Vec<crate::selector::Sel> = o.ann.hidden_axes.iter().filter_map(|s| crate::selector::select(m, s).ok()).collect();
+    let gone = |feat: &(bool, Vec<usize>)| {
+        hidden_axes.iter().any(|s| (s.kind == crate::selector::Kind::Face) == feat.0 && s.kind != crate::selector::Kind::Vertex && feat.1.iter().any(|i| s.ids.contains(i)))
+    };
+    for (k, feat) in lines.center_src.iter().enumerate() {
+        let items: Vec<Prim> = lines.center.iter().filter(|c| c.2 == k).map(|(a, b, _)| Prim::Line { a: *a, b: *b, cls: "center" }).collect();
+        if items.is_empty() || gone(feat) {
+            continue;
+        }
+        let ids: Vec<String> = feat.1.iter().map(|i| i.to_string()).collect();
+        geometry.push(Prim::Group {
+            attrs: vec![
+                ("class", "ann axis".into()),
+                ("data-kind", "axis".into()),
+                ("data-src", format!("{}/hidden_axes", o.src)),
+                ("data-view", o.src.clone()),
+                ("data-feat-kind", if feat.0 { "faces".into() } else { "edges".into() }),
+                ("data-ids", ids.join(" ")),
+            ],
+            pts: vec![],
+            items,
+        });
     }
     let mut geom_bb = BBox2::empty();
     for l in lines.visible.iter().chain(std::iter::once(&boundary)) {
@@ -509,7 +531,7 @@ pub fn build_view(m: &Model, cfg: &Config, o: ViewOpts, warnings: &mut Vec<Strin
     an.clip = o.section.as_ref().map(|s| s.0);
     an.block(&flat(&cut_prims).into_iter().filter(|p| !matches!(p, Prim::Circle { .. })).collect::<Vec<_>>());
     an.block(&mark_block);
-    an.build(o.ann, &o.src);
+    crate::prof::time(&format!("view {}: annotations", o.name), || an.build(o.ann, &o.src));
     for w in an.warnings.drain(..) {
         warnings.push(format!("view '{}': {}", name, w));
     }

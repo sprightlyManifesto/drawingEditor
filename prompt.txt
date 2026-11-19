@@ -1,0 +1,30 @@
+write a headless rust application that creates a engineering drawing of a part from a step file
+will take a json file containing the parameters of the drawing, and the step file and output the drawing as svg
+
+The application
+- The drawings will have a border with a inforamtion box bottom right containing the following fields
+    -Drawing number
+    -Descrition
+    -material
+    -finish
+    -notes
+    -revision
+    -Drawn by
+    -Date
+-the drawing border will be A3 and have a set of think boxes along the top labled A,B,C,D,E,F,G and down the side labled 1,2,3,4,5 to act as a 
+grid for refrencing features
+
+-The json will specify
+    -projection as 3rd or 1st angle default will be specified in  config.json as 3rd
+    -one or more base view by a 3d vector for orientation  eg (1,0,0) and a 3d vector for location. 
+    -scale of the drawing view
+-
+-apply notes in boxes and GD&T frames,  linear , angle, radius or diamter dimension, and ordinate dimension schemes
+    -the applicaiton will place the these around the view and tidy them to avoid them overlapping
+    -each of these will be specifed with the json for the view
+    -the items to which a dimensions attaches will be specifed in the same way as cadquery2 for example:
+     faces(">X").edges("|Z").vertices(">X") picks the furtherst vertex in X on any edge parralel with X on the face furthest out in the X direction
+-the each view will have a named svg group,  within which will be the follwoing groups geometry, GDandT, dimensions
+-once constructed the drawings groups will be moved to avoid the contents of one overlapping another whist still 
+complying with the projection system.
+

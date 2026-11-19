@@ -359,6 +359,11 @@ fn resolve_request(root: &Path, body: &[u8]) -> Result<Value, String> {
     with_model(&d.step, |m| {
         let mut out = serde_json::Map::new();
         for s in sels.iter().take(200) {
+            // a construction point lives in the view's JSON, not the model
+            if crate::annot::cgeom_ref(s).is_some() {
+                out.insert(s.clone(), json!({ "kind": "cpoints", "ids": [], "edges": [] }));
+                continue;
+            }
             let v = match crate::selector::select(m, s) {
                 Ok(sel) => {
                     let kind = match sel.kind {
