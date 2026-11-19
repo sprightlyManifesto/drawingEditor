@@ -201,6 +201,9 @@ pub struct DimSpec {
     /// inside pointing out where they would be outside.
     #[serde(rename = "flipArrows")]
     pub flip_arrows: bool,
+    /// Where the dimension's text centre goes: [x, y] sheet mm from the
+    /// view's centre (y up); set when the dimension is moved in the editor.
+    pub location: Option<[f64; 2]>,
     /// Ordinate: the zero point, and the features dimensioned from it.
     pub origin: Option<OrdRef>,
     pub targets: Vec<OrdRef>,
@@ -424,7 +427,7 @@ pub struct SectionSpec {
     /// Hidden lines behind the cut (default false).
     pub hidden_lines: Option<bool>,
     /// Distance (sheet mm) from the parent view's origin along the projection
-    /// axis; default: next to the parent, clear of other views.
+    /// axis; default: 1.5 x view_gap beyond the parent's geometry.
     pub distance: Option<f64>,
     pub hatch_angle: Option<f64>,
     pub hatch_spacing: Option<f64>,
@@ -448,7 +451,7 @@ pub struct ProjectedSpec {
     pub position: String,
     pub hidden_lines: Option<bool>,
     /// Distance (sheet mm) from the parent view's origin along the projection
-    /// axis; default: next to the parent, clear of other views.
+    /// axis; default: 1.5 x view_gap beyond the parent's geometry.
     pub distance: Option<f64>,
     /// Views projected from this one, aligned with it.
     #[serde(default)]

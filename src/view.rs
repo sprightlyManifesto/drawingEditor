@@ -26,6 +26,9 @@ pub struct View {
     /// Invisible pickable faces / edges / vertices (editor only).
     pub pick: Vec<Prim>,
     pub bbox: BBox2,
+    /// The bounding box of its geometry alone (no annotations): the default
+    /// gaps between views come from it, so adding a dimension moves nothing.
+    pub geom_bbox: BBox2,
     pub pos: V2,
     pub place: Place,
     pub fixed: bool,
@@ -560,6 +563,7 @@ pub fn build_view(m: &Model, cfg: &Config, o: ViewOpts, warnings: &mut Vec<Strin
         dims: std::mem::take(&mut an.dims),
         pick,
         bbox,
+        geom_bbox: if geom_bb.is_empty() { bbox } else { geom_bb },
         pos: V2::default(),
         place: Place::Base,
         fixed: false,
@@ -577,7 +581,20 @@ pub fn build_view(m: &Model, cfg: &Config, o: ViewOpts, warnings: &mut Vec<Strin
 
 /// Put detail views (those with an anchor and not fixed) in the free space
 /// nearest their detail circle.
-pub fn place_details(views: &mut [View], details: &[usize], gap: f64, warnings: &mut Vec<String>) {
+pub fn place_details(views: &mut [View], details: &[usize], gap: f64, fit: bool, warnings: &mut Vec<String>) {
+    if !fit {
+        // not fitting the sheet: right of the parent's geometry, level with the part it enlarges
+        for &i in details {
+            if views[i].fixed {
+                continue;
+            }
+            let Some((pi, local)) = views[i].anchor else { continue };
+            let (pp, pg) = (views[pi].pos, views[pi].geom_bbox);
+            let (g, lr) = (views[i].geom_bbox, views[i].loc_ref);
+            views[i].pos = v2(pp.x + pg.max.x + gap * 1.5 - g.min.x, pp.y + local.y - lr.y);
+        }
+        return;
+    }
     let frame = sheet::frame_box().expand(-4.0);
     let title = sheet::title_box();
     for (k, &i) in details.iter().enumerate() {
@@ -634,12 +651,24 @@ pub fn place_details(views: &mut [View], details: &[usize], gap: f64, warnings: 
 }
 
 /// Arrange clusters (base view + its projected views) on the sheet.
-pub fn layout(views: &mut [View], clusters: &[Vec<usize>], gap: f64, warnings: &mut Vec<String>) {
+/// Place the views. `fit`: lay them out to fit the sheet (children pushed
+/// clear of each other, whole groups moved clear of each other and the title
+/// block) - for a drawing being generated. Otherwise every view stays where
+/// its "location" / "distance" puts it, and one without gets a fixed default
+/// (from the views' geometry alone), so views don't move when the drawing changes.
+pub fn layout(views: &mut [View], clusters: &[Vec<usize>], gap: f64, fit: bool, warnings: &mut Vec<String>) {
+    if !fit {
+        for cl in clusters {
+            position_children(views, cl, &vec![0.0; cl.len()], gap * 1.5, false);
+        }
+        report_layout(views, clusters, warnings);
+        return;
+    }
     // 1. children around their parent, pushed apart along their own axis only
     for cl in clusters {
         let mut push = vec![0.0; cl.len()];
         for _ in 0..200 {
-            position_children(views, cl, &push, gap);
+            position_children(views, cl, &push, gap, true);
             let mut moved = false;
             for a in 0..cl.len() {
                 for b in a + 1..cl.len() {
@@ -754,7 +783,13 @@ pub fn layout(views: &mut [View], clusters: &[Vec<usize>], gap: f64, warnings: &
             break;
         }
     }
-    // report problems
+    report_layout(views, clusters, warnings);
+}
+
+/// Warnings about views off the frame, over the title block or over each other.
+fn report_layout(views: &[View], clusters: &[Vec<usize>], warnings: &mut Vec<String>) {
+    let frame = sheet::frame_box().expand(-4.0);
+    let title = sheet::title_box();
     let all: Vec<usize> = clusters.iter().flatten().copied().collect();
     for (k, &i) in all.iter().enumerate() {
         let b = views[i].world_bbox();
@@ -772,10 +807,12 @@ pub fn layout(views: &mut [View], clusters: &[Vec<usize>], gap: f64, warnings: &
     }
 }
 
-fn position_children(views: &mut [View], cl: &[usize], push: &[f64], gap: f64) {
+fn position_children(views: &mut [View], cl: &[usize], push: &[f64], gap: f64, fit: bool) {
+    // the size of a view: with its annotations when fitting the sheet, else its geometry alone
+    let size = |v: &View| if fit { v.bbox } else { v.geom_bbox };
     // cluster order lists parents before their children
     for (pk, &pi) in cl.iter().enumerate() {
-        let (bp, bb) = (views[pi].pos, views[pi].bbox);
+        let (bp, bb) = (views[pi].pos, size(&views[pi]));
         let mut right = bp.x + bb.max.x + gap;
         let mut left = bp.x + bb.min.x - gap;
         let mut up = bp.y + bb.max.y + gap;
@@ -784,6 +821,7 @@ fn position_children(views: &mut [View], cl: &[usize], push: &[f64], gap: f64) {
         let mut order: Vec<usize> = (pk + 1..cl.len()).filter(|&k| views[cl[k]].parent == Some(pi)).collect();
         order.sort_by_key(|&k| (views[cl[k]].place == Place::FarRight) as u8);
         for k in order {
+            let vb = size(&views[cl[k]]);
             let v = &mut views[cl[k]];
             let p = push[k];
             if let Some(d) = v.dist {
@@ -791,19 +829,19 @@ fn position_children(views: &mut [View], cl: &[usize], push: &[f64], gap: f64) {
                 match v.place {
                     Place::Right | Place::FarRight => {
                         v.pos = v2(bp.x + d, bp.y);
-                        right = right.max(v.pos.x + v.bbox.max.x + gap);
+                        right = right.max(v.pos.x + vb.max.x + gap);
                     }
                     Place::Left => {
                         v.pos = v2(bp.x - d, bp.y);
-                        left = left.min(v.pos.x + v.bbox.min.x - gap);
+                        left = left.min(v.pos.x + vb.min.x - gap);
                     }
                     Place::Above => {
                         v.pos = v2(bp.x, bp.y + d);
-                        up = up.max(v.pos.y + v.bbox.max.y + gap);
+                        up = up.max(v.pos.y + vb.max.y + gap);
                     }
                     Place::Below => {
                         v.pos = v2(bp.x, bp.y - d);
-                        down = down.min(v.pos.y + v.bbox.min.y - gap);
+                        down = down.min(v.pos.y + vb.min.y - gap);
                     }
                     Place::Base => {}
                 }
@@ -811,20 +849,20 @@ fn position_children(views: &mut [View], cl: &[usize], push: &[f64], gap: f64) {
             }
             match v.place {
                 Place::Right | Place::FarRight => {
-                    v.pos = v2(right + p - v.bbox.min.x, bp.y);
-                    right = v.pos.x + v.bbox.max.x + gap;
+                    v.pos = v2(right + p - vb.min.x, bp.y);
+                    right = v.pos.x + vb.max.x + gap;
                 }
                 Place::Left => {
-                    v.pos = v2(left - p - v.bbox.max.x, bp.y);
-                    left = v.pos.x + v.bbox.min.x - gap;
+                    v.pos = v2(left - p - vb.max.x, bp.y);
+                    left = v.pos.x + vb.min.x - gap;
                 }
                 Place::Above => {
-                    v.pos = v2(bp.x, up + p - v.bbox.min.y);
-                    up = v.pos.y + v.bbox.max.y + gap;
+                    v.pos = v2(bp.x, up + p - vb.min.y);
+                    up = v.pos.y + vb.max.y + gap;
                 }
                 Place::Below => {
-                    v.pos = v2(bp.x, down - p - v.bbox.max.y);
-                    down = v.pos.y + v.bbox.min.y - gap;
+                    v.pos = v2(bp.x, down - p - vb.max.y);
+                    down = v.pos.y + vb.min.y - gap;
                 }
                 Place::Base => {}
             }

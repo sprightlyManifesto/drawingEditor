@@ -102,7 +102,7 @@ A base view looks at the part from a direction you give. The views made from it 
 | `direction` | [x, y, z] | *required* | Vector from the part towards the viewer. |
 | `up` | [x, y, z] | Z, or Y for views along Z | Model direction that points up on the sheet. |
 | `scale` | number | 1 | Drawing scale (2 = twice full size). The first base view's scale is the sheet scale shown in the title block; a view at another scale is labelled "SCALE: 2:1" (a section gets it as a second line under "SECTION A-A"). |
-| `location` | [x, y] | placed for you | Sheet position of the view centre. A view with a `location` is not moved by the layout. |
+| `location` | [x, y] | a fixed slot | Sheet position of the view centre (mm from the bottom left). Views stay where the JSON puts them; see [Layout](#layout-and-view-places). |
 | `hidden_lines` | true / false | config.json (false) | Draw hidden edges dashed. |
 | `title_offset` | [x, y] | [0, 0] | Moves the view's "SCALE: 2:1" label from its place under the view (sheet mm). The label is shown when the view is not at the sheet scale (the first base view's scale, shown in the title block). |
 | `projected` | list | | [Projected views](#projected-views) made from this view. |
@@ -133,6 +133,10 @@ A drawing can have more than one base view, for example a front view and an isom
 ]
 ```
 
+## Layout and view places
+
+Views stay where the JSON puts them (`location`, `distance`), so they don't move when the drawing changes; a view without them gets a fixed default from the views' geometry. The views are fitted to the sheet, and their places written into the JSON, only when a drawing is generated (**New from STEP…**, `stepdraw auto`) or with `stepdraw fit drawing.json`.
+
 ## Projected views
 
 A projected view looks at its parent view from one side and stays aligned with it. It takes the parent's scale. In third angle the view from the right goes on the right and the view from above on top; first angle swaps them.
@@ -141,7 +145,7 @@ A projected view looks at its parent view from one side and stays aligned with i
 |---|---|---|---|
 | `position` | string | *required* | `top`, `bottom`, `left`, `right` or `rear` (`above`/`plan`, `below`/`underside` and `back` also work). |
 | `name` | string | `<parent>_<position>` | View name. |
-| `distance` | number | placed for you | Sheet mm from the parent's centre along the projection axis. A view with a `distance` is not moved by the layout. |
+| `distance` | number | 1.5 × `view_gap` beyond the parent's geometry | Sheet mm from the parent's centre along the projection axis. Set when you move the view in the editor. |
 | `title_offset` | [x, y] | [0, 0] | Moves the view's "SCALE: 2:1" label from its place under the view (sheet mm). The label is shown when the view is not at the sheet scale (the first base view's scale, shown in the title block). |
 | `hidden_lines` | true / false | as the parent | Draw hidden edges. |
 | `projected`, `sections`, `details` | lists | | Views made from this one. |
@@ -172,7 +176,7 @@ A section view cuts the part with a plane and looks at the cut. The plane is squ
 | `through` | selector | | The plane passes through this feature's reference point (e.g. a hole's axis). |
 | `point` | [x, y, z] | centre of the part | The plane passes through this model point (instead of `through`). |
 | `name` | string | `section_<label>` | View name. |
-| `distance` | number | placed for you | As for projected views. |
+| `distance` | number | as for projected views | As for projected views. |
 | `hidden_lines` | true / false | false | Hidden edges behind the cut. |
 | `hatch_angle`, `hatch_spacing` | numbers | config.json (45°, 3 mm) | Hatching of the cut faces. |
 | `title_offset` | [x, y] | [0, 0] | Moves the "SECTION A-A" label from its place under the view (sheet mm). |
@@ -293,6 +297,7 @@ Fields for all dimension types:
 |---|---|---|---|
 | `type` | string | *required* | One of the types above. |
 | `from`, `to` | selector | | `linear` and `angle`: the two features. |
+| `location` | [x, y] | placed for you | Where the dimension's text centre goes: sheet mm from the view's centre, y up. A linear or aligned dimension's line moves across to it (the side of the feature it is on) and its text slides along to it, the line running on to text beyond the extension lines; a diameter / radius leader runs out to it; an angle's arc takes the radius that puts its text there. The editor sets it when you move a dimension. Not used by `ordinate`. |
 | `flipArrows` | true / false | false | `linear`, and `diameter` / `radius` seen side-on: the arrows the other way round. Where they would sit inside the extension lines they go outside, pointing in, and where they would be outside (a short dimension) they go inside, pointing out. The text stays where it was. |
 | `fromPoint`, `toPoint` | `"center"` / `"max"` / `"min"` | `"center"` | `linear`: where the dimension meets the `from` / `to` feature. `center`: its reference point (a circle's centre, an edge's midpoint, a face's centre). `max`: its point that makes the dimension largest; `min`: the one that makes it smallest. On a circle, arc or cylinder that is its edge across the measuring direction; on any other feature its extreme point along it (an end of an edge, a corner of a face). |
 | `of` | selector | | `diameter` and `radius`: the feature: a circle or arc edge, a cylindrical face, or a fillet (torus) face where it shows in profile. Either type works on any of these, so a radius can be shown as a diameter and the other way round (in the editor, **→ Radius** / **→ Diameter** in the dimension's JSON window, which also swaps `R<>` / `Ø<>` in `text`). |

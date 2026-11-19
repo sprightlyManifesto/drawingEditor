@@ -727,6 +727,8 @@ const same = (a, b) => Object.keys(a).every(k => Math.abs(a[k] - b[k]) < 1e-6);
 function commit(changes) {            // changes: [{g, before, after}]
   changes = changes.filter(c => !same(c.before, c.after));
   if (!changes.length) return;
+  // a dimension moved: its place goes in the JSON ("location") and stepdraw draws it there
+  if (changes.length === 1 && dimPlaced(changes[0].g)) { writeDimLocation(changes[0].g); return; }
   if (changes.some(c => isView(c.g))) scheduleViewRecord();
   undoStack.push(changes); redoStack = [];
   refreshButtons();
@@ -1034,7 +1036,39 @@ async function setOrdinateGap(g, gap) {
 }
 stage.addEventListener("pointerup", endDrag);
 stage.addEventListener("pointercancel", endDrag);
-stage.addEventListener("dblclick", e => { const h = svg && pick(e); if (h && isTitle(h.g)) { resetTitle(h.g); return; } if (h && h.g && isView(h.g) && unplaceView(h.g)) return; if (h && h.g && !h.cut) { select(h.g, h.hl); reset([h.g]); } });
+stage.addEventListener("dblclick", e => { const h = svg && pick(e); if (h && isTitle(h.g)) { resetTitle(h.g); return; } if (h && h.g && isView(h.g) && unplaceView(h.g)) return; if (h && h.g && dimPlaced(h.g) && unplaceDim(h.g)) return; if (h && h.g && !h.cut) { select(h.g, h.hl); reset([h.g]); } });
+// ------------------------------------------------------------ dimension places in the JSON
+/** Is `g` a dimension whose place is kept in the JSON as "location" (all but ordinates)? */
+const dimPlaced = g => !!g && !isView(g) && g.classList.contains("ann") && ["linear", "leader", "angle"].includes(g.dataset.kind) && !!g.dataset.src && ptrKind(g.dataset.src) === "dimensions";
+/** Where dimension `g`'s text block is centred now: [x, y] sheet mm from its view's centre, y up. */
+function dimLocation(g) {
+  const t = g.querySelector(':scope > [data-role="text"], :scope > [data-role="sym"]') || g;
+  const view = g.closest("g.view");
+  const b = t.getBoundingClientRect();
+  if (!view || !b.width) return null;
+  const q = new DOMPoint(b.left + b.width / 2, b.top + b.height / 2).matrixTransform(view.getScreenCTM().inverse());
+  return [round2(q.x), round2(-q.y)];
+}
+async function writeDimLocation(g) {
+  const loc = dimLocation(g), ptr = g.dataset.src;
+  if (!loc) return;
+  let next;
+  try { next = putCompact(specText, ptr + "/location", loc); } catch (e) { setStatus("Could not record the move: " + e.message, true); return; }
+  // stepdraw draws it there now: the editor's own move goes
+  setState(g, zero(g));
+  await writeSpec(next, "dimension move", `Dimension placed at [${loc.join(", ")}] (its "location"; double-click puts it back where stepdraw chooses)`);
+}
+/** Double-click: a dimension placed by its "location" goes back to stepdraw's place. */
+function unplaceDim(g) {
+  let spec;
+  try { spec = JSON.parse(specText); } catch (e) { return false; }
+  const val = getPtr(spec, g.dataset.src);
+  if (!val || val.location === undefined) return false;
+  const nv = Object.assign({}, val); delete nv.location;
+  setState(g, zero(g));
+  writeEntries([[g.dataset.src, nv]], "dimension reset", "Dimension back where stepdraw places it");
+  return true;
+}
 stage.addEventListener("pointerleave", () => { hover(null); pickHover(null); });
 
 // ------------------------------------------------------------ picked geometry
@@ -1833,6 +1867,7 @@ function schemaFor(kind, spec) {
       properties: {
         type: { enum: ["linear", "diameter", "radius", "angle", "ordinate"], description: "Kind of dimension." },
         from: sel("linear / angle: first feature."), to: sel("linear / angle: second feature."),
+        location: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2, description: "Where the dimension's text centre goes: [x, y] sheet mm from the view's centre, y up (the dimension line follows). Set when you move the dimension; double-click removes it. Not used by ordinates." },
         flipArrows: { type: "boolean", default: false, description: "linear (and diameter / radius seen side-on): arrows the other way round: outside the extension lines pointing in where they would be inside, inside pointing out where they would be outside." },
         fromPoint: { enum: ["center", "max", "min"], default: "center", description: "linear: where the dimension meets \"from\": its reference point (center, default), or its point giving the largest (max) or smallest (min) distance: a circle's edge, an edge's end, a face's corner." },
         toPoint: { enum: ["center", "max", "min"], default: "center", description: "linear: where the dimension meets \"to\": its reference point (center, default), or its point giving the largest (max) or smallest (min) distance: a circle's edge, an edge's end, a face's corner." },
@@ -1947,7 +1982,7 @@ function schemaFor(kind, spec) {
       label: { type: "string", description: "Section letter: \"A\" gives SECTION A-A." },
       name: { type: "string", description: "View name (default section_<label>)." },
       position: { enum: ["right", "left", "top", "bottom", "rear"], description: "Side of the parent the section is looked at from; the cutting plane is square to it." },
-      distance: { type: "number", description: "Distance (sheet mm) from the parent view's centre along the projection axis; set when you move the view. Default: next to the parent." },
+      distance: { type: "number", description: "Distance (sheet mm) from the parent view's centre along the projection axis; set when you move the view. Default: 1.5 × view_gap beyond the parent's geometry (views stay where the JSON puts them)." },
       through: sel("The cutting plane passes through this feature."),
       point: vec3("The cutting plane passes through this model point [x, y, z] (dragging the section arrows in View mode sets it). Without through / point: the centre of the part."),
       hidden_lines: { type: "boolean", description: "Hidden lines behind the cut (default false)." },
@@ -1963,7 +1998,7 @@ function schemaFor(kind, spec) {
     properties: Object.assign({
       name: { type: "string", description: "View name (default <parent>_<position>)." },
       position: { enum: ["top", "bottom", "left", "right", "rear"], description: "Side of the parent view it is looked at from." },
-      distance: { type: "number", description: "Distance (sheet mm) from the parent view's centre along the projection axis; set when you move the view. Default: next to the parent." },
+      distance: { type: "number", description: "Distance (sheet mm) from the parent view's centre along the projection axis; set when you move the view. Default: 1.5 × view_gap beyond the parent's geometry (views stay where the JSON puts them)." },
       hidden_lines: hidden,
       title_offset: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2, description: "Move of the view's \"SCALE: 2:1\" label (shown when the view is not at the sheet scale) from its place under the view [x, y] (sheet mm); set when you drag the label." },
       projected: { type: "array", items: { $ref: "#/definitions/projected" }, description: "Views projected from this one (the arrow buttons add them)." },

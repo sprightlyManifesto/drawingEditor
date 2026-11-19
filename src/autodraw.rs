@@ -361,8 +361,11 @@ pub fn write_for(m: &Model, step: &std::path::Path, out: Option<&std::path::Path
         (_, Some(s)) => s.to_string_lossy().to_string(),
         _ => step.to_string_lossy().to_string(),
     };
-    let (spec, notes) = generate(m, &step_rel, &stem, base_only);
-    let text = compact_arrays(&serde_json::to_string_pretty(&spec).map_err(|e| e.to_string())?) + "\n";
+    let (mut spec, notes) = generate(m, &step_rel, &stem, base_only);
+    // the one time the views are fitted to the sheet: their places go in the
+    // JSON, so later renders keep them where they are
+    fit_layout(&mut spec, step)?;
+    let text = to_text(&spec)?;
     std::fs::write(&path, text).map_err(|e| format!("{}: {}", path.display(), e))?;
     Ok((path, notes))
 }
@@ -385,4 +388,24 @@ fn compact_arrays(t: &str) -> String {
     }
     out.push_str(rest);
     out
+}
+
+/// Lay the drawing's views out to fit the sheet and write where each went
+/// ("location" of base and detail views, "distance" of projected and section
+/// views) into `spec`.
+pub fn fit_layout(spec: &mut Value, step: &std::path::Path) -> Result<(), String> {
+    let ds: crate::config::DrawingSpec = serde_json::from_value(spec.clone()).map_err(|e| e.to_string())?;
+    let cfg = crate::load_config(None)?;
+    let (_, _, places) = crate::render_with(&ds, step, &cfg, true)?;
+    for (src, key, val) in places {
+        if let Some(Value::Object(o)) = spec.pointer_mut(&src) {
+            o.insert(key.to_string(), val);
+        }
+    }
+    Ok(())
+}
+
+/// A drawing JSON as text: pretty, with arrays of numbers on one line.
+pub fn to_text(spec: &Value) -> Result<String, String> {
+    Ok(compact_arrays(&serde_json::to_string_pretty(spec).map_err(|e| e.to_string())?) + "\n")
 }

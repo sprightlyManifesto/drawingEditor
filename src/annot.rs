@@ -119,6 +119,8 @@ pub struct DimText {
     pub extra: Vec<String>,
     /// "flipArrows": the arrows the other way round from where they'd go
     pub flip: bool,
+    /// "location": where the text's centre goes (view coordinates, y up)
+    pub loc: Option<V2>,
 }
 
 /// Copy of `p` with every point mapped by `f` and text turned by `rot` degrees.
@@ -470,7 +472,7 @@ impl<'a> Annotator<'a> {
         };
         let has_value = spec.text.as_ref().map_or(true, |t| t.contains("<>"));
         let whole = |n: &str| if has_value { format!("{}{}{}", pre, n, post) } else { pre.clone() };
-        let mut dt = DimText { main: whole(&num), plus: None, minus: None, limits: false, tail: String::new(), basic: false, frames: vec![], datum: None, line_y: -1.0, extra: vec![], flip: spec.flip_arrows };
+        let mut dt = DimText { main: whole(&num), plus: None, minus: None, limits: false, tail: String::new(), basic: false, frames: vec![], datum: None, line_y: -1.0, extra: vec![], flip: spec.flip_arrows, loc: spec.location.map(|l| v2(l[0], l[1])) };
         // signed deviation text; both deviations get the same decimal places
         let dev = |v: f64, d: usize| {
             if v == 0.0 {
@@ -1297,6 +1299,7 @@ impl<'a> Annotator<'a> {
             line_y: -1.0,
             extra: it.collect(),
             flip: false,
+            loc: None,
         };
         for g in frames {
             let (prims, w, warns) = self.build_frame(g);
@@ -1514,6 +1517,9 @@ impl<'a> Annotator<'a> {
         // per side: list of (level, lo, hi, tlo, thi, ext a, ext b, levels taken)
         let mut placed: Vec<Vec<(usize, f64, f64, f64, f64, f64, f64, usize)>> = vec![vec![]; 4];
         for l in lins.iter_mut() {
+            if l.dt.loc.is_some() {
+                continue; // placed where its "location" says
+            }
             let (lo, hi, tlo, thi) = self.lin_interval(l);
             // extra levels taken by attached frames / datum symbol
             let bh = self.block_h(&l.dt);
@@ -1566,13 +1572,32 @@ impl<'a> Annotator<'a> {
 
     fn render_lin(&mut self, l: &Lin) {
         let cfg = self.cfg;
-        let s = l.side.sign();
-        let off = cfg.dim_offset + l.level as f64 * cfg.dim_spacing;
-        let pos = self.base(l.side) + s * off;
-        self.used[l.side as usize] = self.used[l.side as usize].max(off + self.block_h(&l.dt) + 1.0);
         let w = |along: f64, across: f64| if l.horiz { v2(along, across) } else { v2(across, along) };
         let (xa, ya) = if l.horiz { (l.a.x, l.a.y) } else { (l.a.y, l.a.x) };
         let (xb, yb) = if l.horiz { (l.b.x, l.b.y) } else { (l.b.y, l.b.x) };
+        let rot = if l.horiz { 0.0 } else { 90.0 };
+        let toff = if l.horiz { 1.0 } else { -1.0 };
+        // a "location": the text's centre there, the line under it (on that side of the feature)
+        let fixed = l.dt.loc.map(|loc| {
+            let (along, across) = if l.horiz { (loc.x, loc.y) } else { (loc.y, loc.x) };
+            let t0 = self.text_prims(&l.dt, w(along, toff), rot, Anchor::Middle);
+            let c0 = bbox_of(&t0).center();
+            (along, across - if l.horiz { c0.y } else { c0.x })
+        });
+        let side = match fixed {
+            Some((_, pos)) if l.horiz => if pos >= (ya + yb) / 2.0 { Side::Above } else { Side::Below },
+            Some((_, pos)) => if pos >= (ya + yb) / 2.0 { Side::Right } else { Side::Left },
+            None => l.side,
+        };
+        let s = side.sign();
+        let (off, pos) = match fixed {
+            Some((_, pos)) => ((pos - self.base(side)) * s, pos),
+            None => {
+                let off = cfg.dim_offset + l.level as f64 * cfg.dim_spacing;
+                (off, self.base(side) + s * off)
+            }
+        };
+        self.used[side as usize] = self.used[side as usize].max(off + self.block_h(&l.dt) + 1.0);
         let mut ext = Vec::new();
         for (x, y) in [(xa, ya), (xb, yb)] {
             if (pos - y) * s > cfg.ext_gap {
@@ -1586,8 +1611,6 @@ impl<'a> Annotator<'a> {
         let inside = hi - lo >= l.w + 2.0 * al + 2.0;
         // arrows inside pointing out, or outside pointing in ("flipArrows" swaps them)
         let arrows_in = inside != l.dt.flip;
-        let rot = if l.horiz { 0.0 } else { 90.0 };
-        let toff = if l.horiz { 1.0 } else { -1.0 };
         let dir_al = w(1.0, 0.0);
         if arrows_in {
             // the line runs on to the text when it is outside
@@ -1602,10 +1625,19 @@ impl<'a> Annotator<'a> {
             prims.push(self.arrow(w(lo, pos), -dir_al));
             prims.push(self.arrow(w(hi, pos), dir_al));
         }
-        let text = if inside {
-            self.text_prims(&l.dt, w((lo + hi) / 2.0, pos + toff), rot, Anchor::Middle)
-        } else {
-            self.text_prims(&l.dt, w(hi + al + 1.5, pos + toff), rot, Anchor::Start)
+        let text = match fixed {
+            Some((along, _)) => {
+                // text beyond the extension lines: the dimension line runs on to it
+                let (tl, tr) = (along - l.w / 2.0 - 0.5, along + l.w / 2.0 + 0.5);
+                if tr < lo {
+                    prims.push(Prim::Line { a: w(tl, pos), b: w(lo, pos), cls: "thin" });
+                } else if tl > hi {
+                    prims.push(Prim::Line { a: w(hi, pos), b: w(tr, pos), cls: "thin" });
+                }
+                self.text_prims(&l.dt, w(along, pos + toff), rot, Anchor::Middle)
+            }
+            None if inside => self.text_prims(&l.dt, w((lo + hi) / 2.0, pos + toff), rot, Anchor::Middle),
+            None => self.text_prims(&l.dt, w(hi + al + 1.5, pos + toff), rot, Anchor::Start),
         };
         self.add_obstacles(&prims.iter().chain(&text).filter(|p| !matches!(p, Prim::Line { .. }) || is_dimline(p, l.horiz)).cloned().collect::<Vec<_>>());
         let g = self.lin_group(w(xa, ya + s * cfg.ext_gap), w(xb, yb + s * cfg.ext_gap), w(xa, pos), w(xb, pos), w(0.0, s), ext, prims, text);
@@ -1639,6 +1671,12 @@ impl<'a> Annotator<'a> {
         }
         let mut n = t.perp();
         if (self.geom.center() - (a + b) * 0.5).dot(n) > 0.0 {
+            n = -n;
+        }
+        // a "location": on its side of the feature
+        if let Some(loc) = dt.loc
+            && (loc - (a + b) * 0.5).dot(n) < 0.0
+        {
             n = -n;
         }
         let g = self.geom;
@@ -1681,7 +1719,13 @@ impl<'a> Annotator<'a> {
             });
             (pa, pb, o, tb)
         };
-        let pick = levels
+        // a "location": the line level that puts the text's centre across from it there
+        let fixed = dt.loc.map(|loc| {
+            let d0 = cfg.dim_offset;
+            let (_, _, _, tb) = at(d0);
+            (d0 + (loc - tb.center()).dot(n), loc)
+        });
+        let pick = if fixed.is_some() { 0 } else { levels
             .iter()
             .position(|&(d, near)| {
                 let (pa, pb, _, tb) = at(d);
@@ -1694,9 +1738,23 @@ impl<'a> Annotator<'a> {
                             && self.seg_free(a + n * cfg.ext_gap, pa)
                             && self.seg_free(b + n * cfg.ext_gap, pb)))
             })
-            .unwrap_or(first_outer);
+            .unwrap_or(first_outer) };
         {
-            let (pa, pb, o, _) = at(levels[pick].0);
+            let (pa, pb, mut o, tb) = at(fixed.map_or(levels[pick].0, |f| f.0));
+            // ... and along the line to it (the line runs on to text beyond the extension lines)
+            let mut runon = None;
+            if let Some((_, loc)) = fixed {
+                let sl = (loc - tb.center()).dot(t);
+                o = o + t * sl;
+                let (c, hw) = (tb.center().dot(t) + sl, tb.width().max(tb.height()) / 2.0);
+                let (ta, tb2) = (pa.dot(t), pb.dot(t));
+                let (lo, hi) = (ta.min(tb2), ta.max(tb2));
+                if c + hw < lo {
+                    runon = Some((c - hw, lo));
+                } else if c - hw > hi {
+                    runon = Some((hi, c + hw));
+                }
+            }
             let ext = vec![
                 Prim::Line { a: a + n * cfg.ext_gap, b: pa + n * cfg.ext_overshoot, cls: "thin" },
                 Prim::Line { a: b + n * cfg.ext_gap, b: pb + n * cfg.ext_overshoot, cls: "thin" },
@@ -1708,6 +1766,11 @@ impl<'a> Annotator<'a> {
             } else {
                 vec![Prim::Line { a: pa, b: pb, cls: "thin" }, self.arrow(pa, t), self.arrow(pb, -t)]
             };
+            let mut stat = stat;
+            if let Some((x0, x1)) = runon {
+                let base_pt = pa - t * pa.dot(t);
+                stat.push(Prim::Line { a: base_pt + t * x0, b: base_pt + t * x1, cls: "thin" });
+            }
             let text = self.text_prims(&dt, o, ang, Anchor::Middle);
             self.add_obstacles(&stat);
             self.add_obstacles(&text);
@@ -1831,17 +1894,33 @@ impl<'a> Annotator<'a> {
         let covered: Vec<f64> = c.pts.iter().map(|p| (self.pr.p(*p) - c2).angle()).collect();
         let on_arc = |a: f64| c.full || covered.iter().any(|q| wrap_pi(q - a).abs() < 4f64.to_radians());
         let mut best: Option<(f64, Vec<Prim>, BBox2)> = None;
-        for k in 0..24 {
-            let a = (45.0 + 15.0 * k as f64).to_radians();
-            if !on_arc(a) {
+        // a "location": the text's centre there, the leader running out to it (radially)
+        let fixed = dt.loc.map(|loc| {
+            let right = loc.x >= c2.x;
+            let t0 = if right { self.text_prims(&dt, v2(0.5, 0.8), 0.0, Anchor::Start) } else { self.text_prims(&dt, v2(-0.5, 0.8), 0.0, Anchor::End) };
+            let k2 = loc - bbox_of(&t0).center();
+            let v = k2 - c2;
+            let dir = if v.len() > 1e-9 { v.norm() } else { v2(1.0, 0.0) };
+            (dir.angle(), (v.len() - r2).max(0.5), right)
+        });
+        let angles: Vec<f64> = match fixed {
+            Some((a, _, _)) => vec![a],
+            None => (0..24).map(|k| (45.0 + 15.0 * k as f64).to_radians()).collect(),
+        };
+        for a in angles {
+            if fixed.is_none() && !on_arc(a) {
                 continue;
             }
             let pref = wrap_pi(a - 45f64.to_radians()).abs() * 4.0;
-            for &len in &[6.0, 10.0, 15.0, 22.0, 30.0, 40.0, 52.0, 66.0] {
+            let lens: Vec<f64> = match fixed {
+                Some((_, l, _)) => vec![l],
+                None => vec![6.0, 10.0, 15.0, 22.0, 30.0, 40.0, 52.0, 66.0],
+            };
+            for len in lens {
                 let dir = V2::from_angle(a);
                 let p = c2 + dir * r2;
                 let k2 = c2 + dir * (r2 + len);
-                let right = dir.x >= -1e-9;
+                let right = fixed.map_or(dir.x >= -1e-9, |f| f.2);
                 let sh = if right { tw + 1.0 } else { -(tw + 1.0) };
                 let end = k2 + v2(sh, 0.0);
                 // frames wider than the text stick out on the side away from the leader
@@ -1849,7 +1928,7 @@ impl<'a> Annotator<'a> {
                 let far = if right { end.x.max(k2.x + 0.5 + fw) } else { end.x.min(k2.x - 0.5 - fw) };
                 let tb = BBox2::new(k2, v2(far, k2.y + self.block_h(&dt) + 1.0)).expand(0.3);
                 let inside_geom = self.geom.overlaps(&tb);
-                if !self.box_free(&tb) || !self.seg_free(p, k2) {
+                if fixed.is_none() && (!self.box_free(&tb) || !self.seg_free(p, k2)) {
                     continue;
                 }
                 let score = len + pref + if inside_geom { 40.0 } else { 0.0 };
@@ -1954,13 +2033,22 @@ impl<'a> Annotator<'a> {
         let lb = fb.dist(ip);
         let cfg = self.cfg;
         let rr = (la.min(lb) * 0.6).max(cfg.dim_offset * 1.2);
+        let dt = self.make_text(d, ang.to_degrees(), "", true);
+        // a "location": the arc's radius puts the text there (on the bisector)
+        let rr = match dt.loc {
+            Some(loc) => {
+                let bis0 = V2::from_angle(da.angle() + wrap_pi(db.angle() - da.angle()) / 2.0);
+                let (tw, th) = (self.text_w(&dt), self.block_h(&dt));
+                (loc.dist(ip) - 1.5 - (th / 2.0).max((tw / 2.0) * bis0.x.abs())).max(2.0)
+            }
+            None => rr,
+        };
         let (s0, mut sweep) = (da.angle(), wrap_pi(db.angle() - da.angle()));
         if sweep.abs() < 1e-9 {
             sweep = ang;
         }
         let n = 48;
         let arc: Vec<V2> = (0..=n).map(|i| ip + V2::from_angle(s0 + sweep * i as f64 / n as f64) * rr).collect();
-        let dt = self.make_text(d, ang.to_degrees(), "", true);
         let mut prims = vec![Prim::Poly { pts: arc.clone(), closed: false, cls: "thin" }];
         let tdir0 = V2::from_angle(s0).perp() * sweep.signum();
         prims.push(self.arrow(arc[0], tdir0));

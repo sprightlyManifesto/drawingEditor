@@ -53,7 +53,7 @@ Then open http://127.0.0.1:8080/ in a browser.
       - **Thread:** the metric size is worked out from the tap drill (Ø5 → M6, Ø3.3 → M4). It works on any hole or shaft: its cylinder (between its outline lines), a straight edge of it, or a circle or arc (seen end-on, or the rim of a chamfer, which picks the coaxial cylinder). A picked circle or arc is written as the cylinder it bounds, so the thread is drawn on that cylinder in the view (end-on or side-on). A blind hole is threaded to 70% of its depth unless `depth` says otherwise. With a flat face picked it is greyed out.
 - **Moving views:** a view moves with its annotations. A projected or section view slides only along its projection axis and follows its parent view across it, so it stays aligned. Moving a base view takes its aligned views along. Detail views and other base views move freely.
   - **Recorded in the JSON:** when you let go of a view (or stop nudging it), its place is written to the drawing JSON and the drawing re-renders with it there. A base view gets `"location"`, and a detail view gets `"location"` of its centre. A projected or section view gets `"distance"`, its distance from its parent along the projection axis, so it stays aligned with its parent. Views placed this way are not moved by stepdraw's own layout (they can overlap other views or the title block; you get a warning). <kbd>Ctrl</kbd>+<kbd>Z</kbd> undoes a move, and double-clicking a view placed this way removes its `location` / `distance` so stepdraw places it again.
-- **Moving annotations:** dimensions, GD&T frames, datum symbols, datum targets and notes can be dragged.
+- **Moving annotations:** dimensions, GD&T frames, datum symbols, datum targets and notes can be dragged. A moved dimension (all but ordinates) has its place written to the JSON as `"location"` (its text centre, sheet mm from the view's centre) and is re-rendered there, so the move is kept in the file; double-click a dimension to remove it and let stepdraw place it again (<kbd>Ctrl</kbd>+<kbd>Z</kbd> undoes either). Other annotations' moves are kept in the downloaded SVG.
   - **Linear and aligned dimensions:** the dimension line moves square to the feature, and the extension lines stretch to follow. The text slides along the line; if it goes beyond the extension lines, the dimension line is extended to it. <kbd>Shift</kbd>-drag moves only the line.
   - **Leaders:** the symbol moves, and the leader stays on its feature. A selected leader that doesn't end in an arrow (datum triangle, a dot on a face, a datum-target cross) shows a handle on its end at the part. On an edge seen edge-on the end slides along the edge's line, and past the edge it gets a thin extension line (a datum on an extension line); on a face seen face-on it moves anywhere. The symbol stays put. On an edge seen edge-on, it slides along the edge, square to it. On a circle it stays radial (diameter and radius callouts too). On a face seen face-on, it keeps its point.
   - **Angle dimensions:** the arc changes radius.
@@ -151,11 +151,11 @@ The full reference, with an example for every field, is in [docs/drawing-json.md
 
 ## Layout
 
-Once each view is built (geometry plus annotations), base views are placed at their `location` and projected views alongside their parent.
-Overlapping projected views are pushed outward along their projection axis only, so they stay aligned.
-Whole view clusters are then moved apart and away from the title block, and kept inside the frame.
-Detail views are placed last, in the free space nearest their detail circle (or at their `location`).
-If a view still doesn't fit, you get a warning (use a smaller scale).
+Views stay where the drawing JSON puts them, so they don't jump about when the drawing changes (an annotation added, a view added or moved): base and detail views at their `location`, projected and section views at their `distance` from their parent along its projection axis. Moving a view in the editor writes these.
+
+A view without them gets a fixed default that depends only on the views' geometry (not their annotations): a base view a slot across the sheet, a projected or section view 1.5 × `view_gap` beyond its parent's geometry (after any views already on that side), a detail view to the right of its parent, level with the part it enlarges.
+
+The views are fitted to the sheet (projected views pushed apart along their projection axis, whole groups of views moved apart and clear of the title block, kept in the frame, details placed in free space near their circle) only when a drawing is generated (**New from STEP…**, `stepdraw auto`), or on request with `stepdraw fit drawing.json`; the places that gives are written into the JSON. Views that overlap, cover the title block or leave the frame get a warning.
 
 ## Limitations
 

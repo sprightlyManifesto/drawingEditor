@@ -30,6 +30,10 @@ fn usage() -> ! {
         "usage: stepdraw <drawing.json> [part.step] [-o output.svg] [-c config.json]\n\
          \x20      stepdraw serve [folder] [--port 8080] [-c config.json]\n\
          \x20      stepdraw auto <part.step> [--base] [-o drawing.json]\n\
+         \x20      stepdraw fit <drawing.json> [-o out.json]\n\
+         \n\
+         fit: lays the views out to fit the sheet and writes their places into\n\
+         the JSON (renders otherwise keep views where the JSON puts them).\n\
          \n\
          auto: writes a first drawing JSON for a STEP file (views, overall\n\
          dimensions, hole diameters and positions) next to it; with --base\n\
@@ -115,6 +119,19 @@ fn run() -> Result<Vec<String>, String> {
         }
         let dir = PathBuf::from(pos.get(1).map(String::as_str).unwrap_or("."));
         server::serve(&dir, port, cfg_path.as_deref())?;
+        return Ok(vec![]);
+    }
+    if pos.first().map(String::as_str) == Some("fit") {
+        // lay a drawing's views out to fit the sheet once, and keep it: their places go in the JSON
+        let Some(json) = pos.get(1).filter(|_| pos.len() == 2) else { usage() };
+        let json = Path::new(json);
+        let text = std::fs::read_to_string(json).map_err(|e| format!("{}: {}", json.display(), e))?;
+        let mut v: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("{}: {}", json.display(), e))?;
+        let step = v.get("step_file").and_then(|s| s.as_str()).map(|s| json.parent().unwrap_or(Path::new(".")).join(s)).ok_or("the drawing has no \"step_file\"")?;
+        autodraw::fit_layout(&mut v, &step)?;
+        let out = out.map(PathBuf::from).unwrap_or_else(|| json.to_path_buf());
+        std::fs::write(&out, autodraw::to_text(&v)?).map_err(|e| format!("{}: {}", out.display(), e))?;
+        eprintln!("wrote {} (views placed to fit the sheet)", out.display());
         return Ok(vec![]);
     }
     if pos.first().map(String::as_str) == Some("auto") {
@@ -214,6 +231,16 @@ pub fn load_model(step_path: &Path) -> Result<brep::Model, String> {
 
 /// Render a drawing: the SVG text and the warnings.
 pub fn render(spec: &DrawingSpec, step_path: &Path, cfg: &Config) -> Result<(String, Vec<String>), String> {
+    render_with(spec, step_path, cfg, false).map(|(s, w, _)| (s, w))
+}
+
+/// Where each view ended up, as the JSON places it: (view's JSON path, key, value).
+pub type ViewPlaces = Vec<(String, &'static str, serde_json::Value)>;
+
+/// Render a drawing. `fit`: lay the views out to fit the sheet (for a
+/// generated drawing); otherwise they stay where the JSON puts them. Also
+/// gives where each view went, so a fitted layout can be written to the JSON.
+pub fn render_with(spec: &DrawingSpec, step_path: &Path, cfg: &Config, fit: bool) -> Result<(String, Vec<String>, ViewPlaces), String> {
     let mut cfg = cfg.clone();
     // the drawing's own line widths
     if let Some(w) = &spec.line_weights {
@@ -296,8 +323,29 @@ pub fn render(spec: &DrawingSpec, step_path: &Path, cfg: &Config) -> Result<(Str
         v.name = n.clone();
         names.push(n);
     }
-    view::layout(&mut views, &clusters, cfg.view_gap, &mut warnings);
-    view::place_details(&mut views, &details, cfg.view_gap, &mut warnings);
+    view::layout(&mut views, &clusters, cfg.view_gap, fit, &mut warnings);
+    view::place_details(&mut views, &details, cfg.view_gap, fit, &mut warnings);
+    // where each view is, as its JSON would put it ("location" / "distance")
+    let round = |x: f64| (x * 100.0).round() / 100.0;
+    let places: ViewPlaces = views
+        .iter()
+        .map(|v| match (v.parent, v.place) {
+            (Some(p), Place::Right | Place::FarRight | Place::Left | Place::Above | Place::Below) if v.anchor.is_none() => {
+                let (pp, q) = (views[p].pos, v.pos);
+                let d = match v.place {
+                    Place::Left => pp.x - q.x,
+                    Place::Above => q.y - pp.y,
+                    Place::Below => pp.y - q.y,
+                    _ => q.x - pp.x,
+                };
+                (v.src.clone(), "distance", serde_json::json!(round(d)))
+            }
+            _ => {
+                let l = v.pos + v.loc_ref;
+                (v.src.clone(), "location", serde_json::json!([round(l.x), round(l.y)]))
+            }
+        })
+        .collect();
 
     // ------------------------------------------------------------ SVG
     let mut s = String::new();
@@ -394,7 +442,7 @@ pub fn render(spec: &DrawingSpec, step_path: &Path, cfg: &Config) -> Result<(Str
     }
     s.push_str("</svg>\n");
     crate::prof::report();
-    Ok((s, warnings))
+    Ok((s, warnings, places))
 }
 
 /// A section to be cut from a parent view: frame, placement and plane point.
