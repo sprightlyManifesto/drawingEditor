@@ -339,6 +339,14 @@ pub struct ConstructedSpec {
     pub center: Option<String>,
     /// circle: its radius (model mm), instead of a point it passes through.
     pub radius: Option<f64>,
+    /// circle: its diameter (model mm), instead of a point it passes through.
+    pub diameter: Option<f64>,
+    /// point: a circle it is on (the circumference), instead of `intersect`;
+    /// circle: a circle its centre is on, instead of `center`.
+    pub on: Option<String>,
+    /// with `on`: where on that circle, degrees anticlockwise from the view's
+    /// +x direction (default 0).
+    pub angle: Option<f64>,
 }
 
 /// Line widths for the drawing (mm), over config.json.

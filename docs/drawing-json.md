@@ -239,9 +239,9 @@ An angled elliptical detail:
 
 A view's `constructedGeometry` lists construction geometry made from its features, which annotations in the same view can refer to (in `from`, `to`, `of`, `attach`, `origin`, `targets` and so on) and which is drawn thin:
 
-- **Points** (`cpoint('P1')`): where two lines of the view meet, extended if need be, such as the virtual sharp of a chamfered or rounded corner. The lines are straight edges, flat faces seen edge-on, or construction lines. Drawn as a small cross, with thin extensions of the two lines running to it.
-- **Lines** (`cline('L1')`): between two points, dashed. A point is a vertex, a circle (its centre), any other feature (its reference point) or a construction point.
-- **Circles** (`ccircle('C1')`): round a centre, through a point (or with a `radius`), dashed, in the plane of the view. A diameter or radius dimension can be put on one.
+- **Points** (`cpoint('P1')`): where two lines of the view meet, extended if need be, such as the virtual sharp of a chamfered or rounded corner (the lines are straight edges, flat faces seen edge-on, or construction lines; drawn as a small cross, with thin extensions of the two lines running to it), or a point on a circle (`on`) at an `angle` round it.
+- **Lines** (`cline('L1')`): between two items, dashed: each end at an item's reference point (a vertex, a circle's centre, an edge's midpoint, a face's centre, a construction point, the centre of a construction circle or the middle of a construction line).
+- **Circles** (`ccircle('C1')`): round a centre, or centred on another circle (`on`) at an `angle` round it, through a point or with a `diameter` (or `radius`), dashed, in the plane of the view. A diameter or radius dimension can be put on one: e.g. a pitch circle round a boss, and a hole circle on it at 90°.
 
 Items are made in order, so an item can use those listed before it.
 
@@ -252,13 +252,19 @@ Items are made in order, so an item can use those listed before it.
 | `intersect` | two selectors | | Point: the two lines. |
 | `through` | selectors | | Line: its two points. Circle: a point it passes through. |
 | `center` | selector | | Circle: its centre. |
+| `on` | selector | | Point: the circle it is on (a circle or arc edge, a cylinder, a construction circle), instead of `intersect`. Circle: the circle its centre is on, instead of `center`. |
+| `angle` | number | 0 | With `on`: where round that circle, degrees anticlockwise from the view's +x. |
+| `diameter` | number | | Circle: its diameter in model mm, instead of `through`. |
 | `radius` | number | | Circle: its radius in model mm, instead of `through`. |
 
 ```json
 "constructedGeometry": [
   { "name": "P1", "type": "point", "intersect": ["faces('>Y')", "faces('>X')"] },
   { "name": "L1", "type": "line", "through": ["cpoint('P1')", "edges('%CIRCLE').edges('<X')"] },
-  { "name": "C1", "type": "circle", "center": "edges('%CIRCLE').edges('>X')", "through": ["cpoint('P1')"] }
+  { "name": "C1", "type": "circle", "center": "edges('%CIRCLE').edges('>X')", "through": ["cpoint('P1')"] },
+  { "name": "C2", "type": "circle", "center": "edges('%CIRCLE').edges('<X')", "diameter": 40 },
+  { "name": "P2", "type": "point", "on": "ccircle('C2')", "angle": 45 },
+  { "name": "C3", "type": "circle", "on": "ccircle('C2')", "angle": 90, "diameter": 6 }
 ],
 "dimensions": [
   { "type": "linear", "from": "faces('<X')", "to": "cpoint('P1')", "direction": "horizontal" },
@@ -266,7 +272,7 @@ Items are made in order, so an item can use those listed before it.
 ]
 ```
 
-In the editor, in Geometry mode: pick two straight lines and press **Add construction point**, or two points and press **Add construction line** or **Add construction circle** (centred on the first point picked). Construction items are picked in Geometry mode like other geometry (click on the cross or the dashes) and dimensioned with **Add dimension**; in Annotations mode clicking one opens a menu of the dimensions it can have (diameter, radius, length, angle, distances to a feature you pick), with **Edit JSON…** and **Delete**.
+In the editor, in Geometry mode: pick two straight lines, or one circle (you give the angle), and press **Add construction point**; any two items (geometry or construction geometry) and press **Add construction line**; two points (centred on the first), one point (you give the diameter) or one construction circle (you give the angle and diameter) and press **Add construction circle**. Construction items are picked in Geometry mode like other geometry (click on the cross or the dashes) and dimensioned with **Add dimension**; in Annotations mode clicking one opens a menu of the dimensions it can have (diameter, radius, length, angle, distances to a feature you pick), with **Edit JSON…** and **Delete**.
 
 ## Annotations
 

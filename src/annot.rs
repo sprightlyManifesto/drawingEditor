@@ -270,6 +270,30 @@ impl<'a> Annotator<'a> {
         resolve(self.m, s)
     }
 
+    /// The point of circle `sel` (a circle or arc edge, a cylinder, a construction
+    /// circle) at `angle` degrees round it, anticlockwise from the view's +x
+    /// (for a circle seen at a slant: from the direction of +x in its plane).
+    fn point_on(&mut self, sel: &str, angle: f64) -> Result<V3, String> {
+        let refs = match cgeom_ref(sel) {
+            Some(_) => self.res(sel)?,
+            None => self.circ_refs(&Some(sel.to_string())).ok_or_else(|| format!("{} picks nothing", sel))?,
+        };
+        let c = refs.iter().find_map(|r| r.circ.clone()).ok_or_else(|| format!("{} is not a circle", sel))?;
+        let z = c.axis.norm();
+        let mut e1 = self.pr.r - z * self.pr.r.dot(z);
+        if e1.len() < 1e-9 {
+            e1 = self.pr.u - z * self.pr.u.dot(z);
+        }
+        let e1 = e1.norm();
+        let mut e2 = z.cross(e1);
+        // anticlockwise as seen in the view
+        if e2.dot(self.pr.u) < 0.0 && z.dot(self.pr.d).abs() > 1e-6 {
+            e2 = -e2;
+        }
+        let a = angle.to_radians();
+        Ok(c.c + (e1 * a.cos() + e2 * a.sin()) * c.r)
+    }
+
     /// A point of the model a construction item is made from: a vertex, the
     /// centre of a circle, a construction point (any feature: its reference point).
     fn point_of(&self, sel: &str) -> Result<V3, String> {
@@ -298,9 +322,28 @@ impl<'a> Annotator<'a> {
             }
             let src = format!("{}/constructedGeometry/{}", base, i);
             let (geo, prims, sel, pts): (RefGeo, Vec<Prim>, String, Vec<(&'static str, V2)>) = match kind.as_str() {
+                "point" if c.on.is_some() => {
+                    // on a circle, at an angle round it
+                    let on = c.on.as_deref().unwrap();
+                    let p3 = match self.point_on(on, c.angle.unwrap_or(0.0)) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            self.warnings.push(format!("{}: {}", what, e));
+                            continue;
+                        }
+                    };
+                    let p2 = self.pr.p(p3);
+                    let k = 1.2;
+                    let prims = vec![
+                        Prim::Line { a: p2 - v2(k, k), b: p2 + v2(k, k), cls: "thin" },
+                        Prim::Line { a: p2 - v2(k, -k), b: p2 + v2(k, -k), cls: "thin" },
+                    ];
+                    let g = RefGeo { rep: p3, ext: vec![p3], circ: None, line: None, plane_n: None };
+                    (g, prims, format!("cpoint('{}')", name), vec![("data-pt", p2)])
+                }
                 "point" => {
                     if c.intersect.len() != 2 {
-                        self.warnings.push(format!("{}: needs two lines in \"intersect\"", what));
+                        self.warnings.push(format!("{}: needs two lines in \"intersect\", or a circle in \"on\"", what));
                         continue;
                     }
                     // each line: its 2D segment, and its 3D ends when it is an edge or a construction line
@@ -373,11 +416,13 @@ impl<'a> Annotator<'a> {
                     (g, vec![Prim::Line { a: a2, b: b2, cls: "construct" }], format!("cline('{}')", name), vec![("data-p0", a2), ("data-p1", b2)])
                 }
                 "circle" => {
-                    let Some(csel) = c.center.as_deref() else {
-                        self.warnings.push(format!("{}: needs a \"center\"", what));
-                        continue;
+                    // its centre: a point, or a place on another circle
+                    let centre = match (c.center.as_deref(), c.on.as_deref()) {
+                        (Some(csel), _) => self.point_of(csel),
+                        (None, Some(on)) => self.point_on(on, c.angle.unwrap_or(0.0)),
+                        (None, None) => Err("needs a \"center\", or a circle in \"on\"".to_string()),
                     };
-                    let c3 = match self.point_of(csel) {
+                    let c3 = match centre {
                         Ok(p) => p,
                         Err(e) => {
                             self.warnings.push(format!("{}: {}", what, e));
@@ -386,7 +431,7 @@ impl<'a> Annotator<'a> {
                     };
                     let c2 = self.pr.p(c3);
                     // its radius in the view: through a point, or given (model mm)
-                    let r2 = match (c.through.first(), c.radius) {
+                    let r2 = match (c.through.first(), c.radius.or(c.diameter.map(|d| d / 2.0))) {
                         (Some(t), _) => match self.point_of(t) {
                             Ok(q) => self.pr.p(q).dist(c2),
                             Err(e) => {
@@ -396,7 +441,7 @@ impl<'a> Annotator<'a> {
                         },
                         (None, Some(r)) => r * s,
                         (None, None) => {
-                            self.warnings.push(format!("{}: needs a point in \"through\" or a \"radius\"", what));
+                            self.warnings.push(format!("{}: needs a \"diameter\", a \"radius\" or a point in \"through\"", what));
                             continue;
                         }
                     };

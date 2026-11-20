@@ -1,0 +1,45 @@
+{
+  "step_file": "examples2.step",
+  "title": {
+    "drawing_number": "EXAMPLES2",
+    "description": "EXAMPLES2",
+    "material": "",
+    "finish": "",
+    "notes": "REMOVE ALL BURRS AND SHARP EDGES.",
+    "revision": "A",
+    "drawn_by": "",
+    "date": "2026-11-19"
+  },
+  "views": [
+    {
+      "name": "front",
+      "direction": [0, -1, 0],
+      "up": [0, 0, 1],
+      "scale": 3.0,
+      "dimensions": [
+        {
+          "type": "linear",
+          "from": "edges('<X')",
+          "to": "edges('>X')",
+          "direction": "horizontal",
+          "side": "below"
+        },
+        {
+          "type": "linear",
+          "from": "faces('%PLANE').faces('<Z')",
+          "to": "faces('%PLANE').faces('>Z')",
+          "direction": "vertical",
+          "side": "left"
+        }
+      ],
+      "projected": [
+        {
+          "position": "right",
+          "dimensions": [],
+          "distance": 139.89
+        }
+      ],
+      "location": [152.1, 161.65]
+    }
+  ]
+}

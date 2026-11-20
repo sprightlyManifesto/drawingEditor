@@ -1201,12 +1201,14 @@ function renderSelPanel() {
   add.appendChild(cpb);
   // two points (vertices, circle centres, construction points): a line between them, or a circle
   const twoPts = pointPair();
-  for (const [ct, label, tip] of [["line", "Add construction line", "a dashed construction line between the two points"],
-                                  ["circle", "Add construction circle", "a dashed construction circle centred on the first point picked, through the second"]]) {
+  const twoAny = anyPair();
+  const circWhy = circleable();
+  for (const [ct, label, tip, why] of [["line", "Add construction line", "a dashed construction line between the two items (their reference points: a point, a circle's centre, an edge's midpoint, a face's centre)", twoAny],
+                                       ["circle", "Add construction circle", "a dashed construction circle: centred on the first point picked, through the second; or round one point (you give its diameter); or centred on a construction circle at an angle (you give the angle and diameter)", circWhy]]) {
     const b = document.createElement("button");
     b.textContent = label;
-    b.disabled = !specText || addBusy || !!twoPts;
-    b.title = twoPts || `Add ${tip} to this view's constructedGeometry; it can be selected, deleted and dimensioned`;
+    b.disabled = !specText || addBusy || !!why;
+    b.title = why || `Add ${tip} to this view's constructedGeometry; it can be selected, deleted and dimensioned`;
     b.onclick = () => addConstruction(ct);
     add.appendChild(b);
   }
@@ -1407,9 +1409,12 @@ function threadable() {
 }
 /** Why the selection can't make a construction point ("" when it can): two
  *  straight edges in one view that aren't parallel there. */
+/** Is a pick a circle (its circumference): a circle or arc edge, a cylinder, a construction circle? */
+const circleLike = p => (p.kind === "edges" && /^(CIRCLE|ARC)/.test(p.info || "")) || (p.kind === "faces" && /^CYLINDER/.test(p.info || "")) || (p.kind === "cgeom" && p.ctype === "circle");
 function constructable() {
   const list = [...picks.values()];
-  if (list.length !== 2) return "Pick two straight lines in one view (Ctrl+click adds the second)";
+  if (list.length === 1 && circleLike(list[0])) return "";      // a point on its circumference
+  if (list.length !== 2) return "Pick two straight lines in one view (Ctrl+click adds the second), or one circle";
   if (!list.every(p => (p.kind === "edges" && /^LINE/.test(p.info || "")) || (p.kind === "cgeom" && p.ctype === "line"))) return "Both picks must be straight lines (edges or construction lines)";
   if (!list[0].view || list[0].view !== list[1].view) return "Pick both lines in the same view";
   const dirs = list.map(p => {
@@ -1429,6 +1434,13 @@ function nextPointName(spec, prefix = "P") {
 }
 /** Is a pick a point: a vertex, a circle (its centre) or a construction point? */
 const pointLike = p => p.kind === "vertices" || (p.kind === "edges" && /^CIRCLE/.test(p.info || "")) || (p.kind === "cgeom" && p.ctype === "point");
+/** Why the selection isn't two items (any geometry or construction geometry) in one view ("" when it is). */
+function anyPair() {
+  const list = [...picks.values()];
+  if (list.length !== 2) return "Pick two items in one view (Ctrl+click adds the second): points, edges, faces or construction geometry";
+  if (!list[0].view || list[0].view !== list[1].view) return "Pick both items in the same view";
+  return "";
+}
 /** Why the selection isn't two points in one view ("" when it is). */
 function pointPair() {
   const list = [...picks.values()];
@@ -1437,17 +1449,48 @@ function pointPair() {
   if (!list[0].view || list[0].view !== list[1].view) return "Pick both points in the same view";
   return "";
 }
+/** Why the selection can't make a construction circle ("" when it can): two points, one point, or one construction circle. */
+function circleable() {
+  const list = [...picks.values()];
+  if (list.length === 1 && (pointLike(list[0]) || (list[0].kind === "cgeom" && list[0].ctype === "circle"))) return "";
+  return pointPair() && "Pick one or two points (vertices, circles' centres, construction points), or one construction circle";
+}
+/** Ask for a number (null: cancelled); `zeroOk` allows 0 and negatives (angles). */
+function askNumber(question, dflt, zeroOk) {
+  for (;;) {
+    const a = prompt(question, String(dflt));
+    if (a === null) return null;
+    const x = parseFloat(a);
+    if (isFinite(x) && (zeroOk || x > 0)) return Math.round(x * 1000) / 1000;
+    alert(zeroOk ? "Give a number" : "Give a number above 0");
+  }
+}
 async function addConstruction(ct) {
-  if (pointPair() || addBusy) return;
+  if ((ct === "line" ? anyPair() : circleable()) || addBusy) return;
   let spec;
   try { spec = JSON.parse(specText); } catch (e) { setStatus("The drawing JSON could not be read", true); return; }
   const list = [...picks.values()], view = list[0].view;
   if (!view.dataset.src) { setStatus("Re-render the drawing first", true); return; }
   addBusy = true; renderSelPanel();
   try {
-    const [a, b] = [await selectorOf(list[0].kind, [list[0].id]), await selectorOf(list[1].kind, [list[1].id])];
     const name = nextPointName(spec, ct === "line" ? "L" : "C");
-    const val = ct === "line" ? { name, type: "line", through: [a, b] } : { name, type: "circle", center: a, through: [b] };
+    let val;
+    if (list.length === 2) {
+      const [a, b] = [await selectorOf(list[0].kind, [list[0].id]), await selectorOf(list[1].kind, [list[1].id])];
+      val = ct === "line" ? { name, type: "line", through: [a, b] } : { name, type: "circle", center: a, through: [b] };
+    } else if (list[0].kind === "cgeom" && list[0].ctype === "circle") {
+      // centred on a construction circle, at an angle round it
+      const angle = askNumber("Angle of the new circle's centre round the circle, degrees anticlockwise from the right (+x):", 0, true);
+      if (angle === null) return;
+      const diameter = askNumber("Diameter of the new circle (mm):", 10, false);
+      if (diameter === null) return;
+      val = { name, type: "circle", on: await selectorOf("cgeom", [list[0].id]), angle, diameter };
+    } else {
+      // round one point
+      const diameter = askNumber("Diameter of the circle (mm):", 10, false);
+      if (diameter === null) return;
+      val = { name, type: "circle", center: await selectorOf(list[0].kind, [list[0].id]), diameter };
+    }
     const next = appendSpec(specText, view.dataset.src + "/constructedGeometry", val);
     clearPicks();
     await writeSpec(next, "construction " + ct, `Added construction ${ct} ${name} to view '${view.id}' (${ct === "line" ? "cline" : "ccircle"}('${name}'); pick it in Geometry mode to dimension it)`);
@@ -1463,11 +1506,20 @@ async function addConstructionPoint() {
   try { spec = JSON.parse(specText); } catch (e) { setStatus("The drawing JSON could not be read", true); return; }
   const list = [...picks.values()], view = list[0].view;
   if (!view.dataset.src) { setStatus("Re-render the drawing first", true); return; }
+  // one circle: a point on it, at an angle asked for
+  let angle = null;
+  if (list.length === 1) {
+    const a = askNumber("Angle of the point round the circle, degrees anticlockwise from the right (+x):", 0, true);
+    if (a === null) return;
+    angle = a;
+  }
   addBusy = true; renderSelPanel();
   try {
-    const intersect = [await selectorOf(list[0].kind, [list[0].id]), await selectorOf(list[1].kind, [list[1].id])];
     const name = nextPointName(spec);
-    const next = appendSpec(specText, view.dataset.src + "/constructedGeometry", { name, type: "point", intersect });
+    const val = angle !== null
+      ? { name, type: "point", on: await selectorOf(list[0].kind, [list[0].id]), angle }
+      : { name, type: "point", intersect: [await selectorOf(list[0].kind, [list[0].id]), await selectorOf(list[1].kind, [list[1].id])] };
+    const next = appendSpec(specText, view.dataset.src + "/constructedGeometry", val);
     clearPicks();
     await writeSpec(next, "construction point", `Added construction point ${name} to view '${view.id}': pick it in Geometry mode to dimension to it (cpoint('${name}'))`);
   } catch (e) {
@@ -1950,11 +2002,14 @@ function schemaFor(kind, spec) {
     constructedGeometry: { type: "array", description: "Construction geometry of this view; annotations refer to it as cpoint('P1'), cline('L1'), ccircle('C1'). Add it in Geometry mode from two picked lines (a point) or two picked points (a line or a circle).",
       items: { type: "object", additionalProperties: false, required: ["name"], properties: {
         name: { type: "string", description: "Name annotations use: cpoint('P1'), cline('L1'), ccircle('C1')." },
-        type: { enum: ["point", "line", "circle"], description: "point (default): where two lines meet; line: between two points; circle: round a centre." },
+        type: { enum: ["point", "line", "circle"], description: "point (default): where two lines meet, or on a circle at an angle; line: between two points; circle: round a centre (or a place on another circle), through a point or with a diameter / radius." },
         intersect: { type: "array", minItems: 2, maxItems: 2, items: sel("A straight edge, a flat face seen edge-on or a construction line."), description: "point: the two lines." },
         through: { type: "array", minItems: 1, maxItems: 2, items: sel("A point: a vertex, a circle (its centre) or a construction point."), description: "line: its two points; circle: a point it passes through." },
         center: sel("circle: its centre (a vertex, a circle's centre or a construction point)."),
-        radius: { type: "number", exclusiveMinimum: 0, description: "circle: its radius in model mm, instead of a point it passes through." } } } },
+        radius: { type: "number", exclusiveMinimum: 0, description: "circle: its radius in model mm, instead of a point it passes through." },
+        diameter: { type: "number", exclusiveMinimum: 0, description: "circle: its diameter in model mm, instead of a point it passes through." },
+        on: sel("point: a circle it is on (a circle or arc edge, a cylinder, a construction circle), instead of intersect; circle: a circle its centre is on, instead of center."),
+        angle: { type: "number", description: "With on: where round that circle, degrees anticlockwise from the view's +x (default 0)." } } } },
   };
   const vec3 = d => ({ type: "array", items: { type: "number" }, minItems: 3, maxItems: 3, description: d });
   const hidden = { type: "boolean", description: "Draw hidden lines (default false, from config.json)." };
@@ -3186,8 +3241,8 @@ async function recordViewMoves() {
   let next = specText;
   const ids = [], names = [];
   for (const g of svg.querySelectorAll(":scope > g.view")) {
-    const dx = num(g.dataset.dx), dy = num(g.dataset.dy);
-    if (Math.abs(dx) < 1e-6 && Math.abs(dy) < 1e-6) continue;
+    // moved views, and views aligned with a moved view (they keep their place on the sheet)
+    if (!viewMoved(g)) continue;
     const ptr = g.dataset.src, val = ptr && getPtr(spec, ptr);
     if (!val) continue;
     try {
@@ -3227,13 +3282,29 @@ function resetTitle(g) {
   writeEntries([[ptr, nv]], "label reset", `${g.textContent.trim()} back in its place`);
 }
 /** `text` with view `g`'s place as it is on the sheet now (its move included) written in. */
+/** How far an aligned view's parent has moved on the sheet (its whole move, y down). */
+function parentShift(g) {
+  const p = g.dataset.parent ? viewById(g.dataset.parent) : null;
+  return p ? viewOffset(p) : V(0, 0);
+}
+/** Has view `g` moved relative to where its JSON puts it (an aligned view: along its axis, relative to its parent)? */
+function viewMoved(g) {
+  const dx = num(g.dataset.dx), dy = num(g.dataset.dy);
+  if (g.dataset.dist !== undefined) {
+    const dir = pt(g.dataset.dir), po = parentShift(g);
+    return Math.abs((dx - po.x) * dir.x + (dy - po.y) * dir.y) > 1e-6;
+  }
+  return Math.abs(dx) > 1e-6 || Math.abs(dy) > 1e-6;
+}
 function placeView(text, g) {
   const ptr = g.dataset.src, val = ptr && getPtr(JSON.parse(text), ptr);
   if (!val) return text;
   const dx = num(g.dataset.dx), dy = num(g.dataset.dy);
   if (g.dataset.dist !== undefined) {
-    const dir = pt(g.dataset.dir);
-    return putCompact(text, ptr + "/distance", round2(+g.dataset.dist + dx * dir.x + dy * dir.y));
+    // its distance from its parent along the axis: its own move less its parent's (a view
+    // stays where it is on the sheet when its parent moves along its axis)
+    const dir = pt(g.dataset.dir), po = parentShift(g);
+    return putCompact(text, ptr + "/distance", round2(+g.dataset.dist + (dx - po.x) * dir.x + (dy - po.y) * dir.y));
   }
   if (g.dataset.loc) {
     const l = pt(g.dataset.loc);           // sheet mm, y up
